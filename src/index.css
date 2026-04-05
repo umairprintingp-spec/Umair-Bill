@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800;900&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+
+  /* Override default colors with hex to avoid oklch (unsupported by html2canvas) */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+
+  --color-orange-50: #fff7ed;
+  --color-orange-100: #ffedd5;
+  --color-orange-200: #fed7aa;
+  --color-orange-500: #f97316;
+  --color-orange-600: #ea580c;
+
+  --color-green-50: #f0fdf4;
+  --color-green-100: #dcfce7;
+  --color-green-600: #16a34a;
+
+  --color-red-50: #fef2f2;
+  --color-red-100: #fee2e2;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+
+  --color-black: #000000;
+  --color-white: #ffffff;
+}
+
+:root {
+  --orange: #f5a623;
+  --orange2: #e8824a;
+  --dark: #0d0f14;
+  --dark2: #161920;
+  --dark3: #1e2230;
+  --card: #1a1d28;
+  --bg: #0d0f14;
+  --bg2: #161920;
+  --bg3: #1e2230;
+  --border: rgba(255,255,255,0.08);
+  --text: #f0f2f8;
+  --text2: #8b95b0;
+  --text3: #4a5270;
+  --green: #22c55e;
+  --blue: #3b82f6;
+  --red: #ef4444;
+  --radius: 16px;
+}
+
+.light {
+  --bg: #f0f4fa;
+  --bg2: #e4e8f2;
+  --bg3: #d8dcea;
+  --card: #ffffff;
+  --border: rgba(0,0,0,0.08);
+  --text: #1a1f30;
+  --text2: #4a5068;
+  --text3: #8b92a9;
+}
+
+body {
+  @apply bg-[var(--dark)] text-[var(--text)] font-sans;
+}
+
+.light body {
+  @apply bg-[var(--bg)] text-[var(--text)];
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply font-display;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-[var(--dark2)];
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-[var(--orange)] rounded-full;
+}

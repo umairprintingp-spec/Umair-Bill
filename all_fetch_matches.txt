@@ -1,0 +1,30 @@
+./src/pages/CustomerPortal.tsx:41:    const fetchData = async () => {
+./src/pages/CustomerPortal.tsx:97:    fetchData();
+./package-lock.json:1457:    "node_modules/@protobufjs/fetch": {
+./package-lock.json:1459:      "resolved": "https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.0.tgz",
+./package-lock.json:3036:    "node_modules/fetch-blob": {
+./package-lock.json:3038:      "resolved": "https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz",
+./package-lock.json:3140:        "fetch-blob": "^3.1.2"
+./package-lock.json:3236:        "node-fetch": "^3.3.2"
+./package-lock.json:4029:    "node_modules/node-fetch": {
+./package-lock.json:4031:      "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz",
+./package-lock.json:4036:        "fetch-blob": "^3.1.4",
+./package-lock.json:4044:        "url": "https://opencollective.com/node-fetch"
+./package-lock.json:4182:        "@protobufjs/fetch": "^1.1.0",
+./fetch_matches.txt:1:src/pages/CustomerPortal.tsx:41:    const fetchData = async () => {
+./fetch_matches.txt:2:src/pages/CustomerPortal.tsx:97:    fetchData();
+./fetch_matches_all.txt:1:./src/pages/CustomerPortal.tsx:41:    const fetchData = async () => {
+./fetch_matches_all.txt:2:./src/pages/CustomerPortal.tsx:97:    fetchData();
+./fetch_matches_all.txt:3:./package-lock.json:1457:    "node_modules/@protobufjs/fetch": {
+./fetch_matches_all.txt:4:./package-lock.json:1459:      "resolved": "https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.0.tgz",
+./fetch_matches_all.txt:5:./package-lock.json:3036:    "node_modules/fetch-blob": {
+./fetch_matches_all.txt:6:./package-lock.json:3038:      "resolved": "https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz",
+./fetch_matches_all.txt:7:./package-lock.json:3140:        "fetch-blob": "^3.1.2"
+./fetch_matches_all.txt:8:./package-lock.json:3236:        "node-fetch": "^3.3.2"
+./fetch_matches_all.txt:9:./package-lock.json:4029:    "node_modules/node-fetch": {
+./fetch_matches_all.txt:10:./package-lock.json:4031:      "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz",
+./fetch_matches_all.txt:11:./package-lock.json:4036:        "fetch-blob": "^3.1.4",
+./fetch_matches_all.txt:12:./package-lock.json:4044:        "url": "https://opencollective.com/node-fetch"
+./fetch_matches_all.txt:13:./package-lock.json:4182:        "@protobufjs/fetch": "^1.1.0",
+./fetch_matches_all.txt:14:./fetch_matches.txt:1:src/pages/CustomerPortal.tsx:41:    const fetchData = async () => {
+./fetch_matches_all.txt:15:./fetch_matches.txt:2:src/pages/CustomerPortal.tsx:97:    fetchData();

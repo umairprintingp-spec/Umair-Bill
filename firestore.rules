@@ -1,0 +1,123 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: customers
+    // Fields: id, name, mobile, address, type, email, notes, created, ownerUid
+    //
+    // Collection: services
+    // Fields: id, name, cat, price, unit, notes, ownerUid
+    //
+    // Collection: invoices
+    // Fields: id, customerId, customerName, customerMobile, customerAddress, items, subtotal, discount, gst, gstPct, total, payMode, status, created, ownerUid
+    //
+    // Collection: settings
+    // Fields: name, owner, phone, address, upi, gst, accNo, ifsc, bank, accName, logo, invPrefix, ownerUid
+    //
+    // Collection: counters
+    // Fields: INV, ownerUid
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.ownerUid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "msking91400@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidCustomer(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.mobile is string && data.mobile.size() >= 10 && data.mobile.size() <= 15 &&
+             data.ownerUid == request.auth.uid;
+    }
+
+    function isValidService(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.ownerUid == request.auth.uid;
+    }
+
+    function isValidInvoice(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.total is number && data.total >= 0 &&
+             data.ownerUid == request.auth.uid;
+    }
+
+    function isValidSettings(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.ownerUid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /customers/{customerId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidCustomer(request.resource.data);
+      allow update: if isDocOwner() && isValidCustomer(request.resource.data) && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /services/{serviceId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidService(request.resource.data);
+      allow update: if isDocOwner() && isValidService(request.resource.data) && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      // Public read for portal access (using ID as secret)
+      allow read: if true; 
+      allow create: if isAuthenticated() && isValidInvoice(request.resource.data);
+      allow update: if isDocOwner() && isValidInvoice(request.resource.data) && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /settings/{ownerUid} {
+      allow read: if isOwner(ownerUid) || isAdmin();
+      allow write: if isOwner(ownerUid) && isValidSettings(request.resource.data);
+    }
+
+    match /counters/{ownerUid} {
+      allow read: if isOwner(ownerUid) || isAdmin();
+      allow write: if isOwner(ownerUid);
+    }
+
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

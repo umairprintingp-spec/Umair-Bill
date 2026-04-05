@@ -1,0 +1,123 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer of the shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "mobile": { "type": "string" },
+        "address": { "type": "string" },
+        "type": { "type": "string", "enum": ["Regular", "VIP"] },
+        "email": { "type": "string", "format": "email" },
+        "notes": { "type": "string" },
+        "created": { "type": "string", "format": "date" },
+        "ownerUid": { "type": "string", "description": "The UID of the shop owner" }
+      },
+      "required": ["name", "mobile", "ownerUid"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "A service or product offered by the shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cat": { "type": "string" },
+        "price": { "type": "number" },
+        "unit": { "type": "string" },
+        "notes": { "type": "string" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["name", "price", "ownerUid"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "An invoice generated for a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerMobile": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "serviceId": { "type": "string" },
+              "serviceName": { "type": "string" },
+              "qty": { "type": "number" },
+              "rate": { "type": "number" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "gst": { "type": "number" },
+        "gstPct": { "type": "number" },
+        "total": { "type": "number" },
+        "payMode": { "type": "string" },
+        "status": { "type": "string", "enum": ["Paid", "Pending"] },
+        "created": { "type": "string", "format": "date" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["id", "customerName", "total", "ownerUid"]
+    },
+    "ShopSettings": {
+      "title": "Shop Settings",
+      "description": "Settings for the shop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "upi": { "type": "string" },
+        "gst": { "type": "string" },
+        "accNo": { "type": "string" },
+        "ifsc": { "type": "string" },
+        "bank": { "type": "string" },
+        "accName": { "type": "string" },
+        "logo": { "type": "string" },
+        "invPrefix": { "type": "string" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["name", "ownerUid"]
+    },
+    "Counters": {
+      "title": "Counters",
+      "description": "Sequential counters for IDs",
+      "type": "object",
+      "properties": {
+        "INV": { "type": "integer" },
+        "ownerUid": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Collection of customers"
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Collection of services"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Collection of invoices"
+    },
+    "/settings/{ownerUid}": {
+      "schema": "ShopSettings",
+      "description": "Shop settings per owner"
+    },
+    "/counters/{ownerUid}": {
+      "schema": "Counters",
+      "description": "Counters per owner"
+    }
+  }
+}
