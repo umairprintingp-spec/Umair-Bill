@@ -96,6 +96,20 @@
         "INV": { "type": "integer" },
         "ownerUid": { "type": "string" }
       }
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A business expense",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "ownerUid": { "type": "string" }
+      },
+      "required": ["title", "amount", "date", "ownerUid"]
     }
   },
   "firestore": {
@@ -118,6 +132,10 @@
     "/counters/{ownerUid}": {
       "schema": "Counters",
       "description": "Counters per owner"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of expenses"
     }
   }
 }

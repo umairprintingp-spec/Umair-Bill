@@ -42,10 +42,33 @@ import {
   Eye,
   EyeOff,
   Info,
-  Clock
+  Clock,
+  Bot,
+  Send,
+  Sparkles,
+  ShoppingBag,
+  UserCircle,
+  IndianRupee,
+  Wallet
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { QRCodeSVG } from 'qrcode.react';
+import { GoogleGenAI } from "@google/genai";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  PieChart, 
+  Pie, 
+  Cell, 
+  AreaChart, 
+  Area 
+} from 'recharts';
 import { cn } from '../lib/utils';
 import { 
   auth, 
@@ -102,19 +125,31 @@ interface InvoiceItem {
 
 interface Invoice {
   id: string;
+  docId?: string;
   customerId: string;
   customerName: string;
   customerMobile: string;
   customerAddress: string;
+  customerEmail?: string;
   items: InvoiceItem[];
   subtotal: number;
   discount: number;
+  discountAmount: number;
   gst: number;
   gstPct: number;
   total: number;
   payMode: string;
   status: 'Paid' | 'Pending';
   created: string;
+  ownerUid: string;
+}
+
+interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  category: string;
+  date: string;
   ownerUid: string;
 }
 
@@ -133,12 +168,18 @@ interface ShopSettings {
   invPrefix: string;
   ownerUid: string;
   autoWhatsApp: boolean;
+  autoWhatsAppShare: boolean;
   socialWhatsapp: string;
   socialInstagram: string;
   socialFacebook: string;
+  whatsapp?: string;
+  instagram?: string;
+  facebook?: string;
+  waLink?: string;
   businessCategory: string;
   invoiceTerms: string;
   currency: string;
+  theme: 'amber' | 'blue' | 'rose' | 'emerald' | 'slate';
 }
 
 const fmt = (n: number, symbol: string = '₹') => (symbol || '₹') + ' ' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -155,6 +196,7 @@ export default function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(localStorage.getItem('darkMode') !== 'light');
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   
@@ -162,6 +204,7 @@ export default function MainApp() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [shopSettings, setShopSettings] = useState<ShopSettings>({
     name: 'Umair Bills',
     owner: 'Mohammad Shadab',
@@ -177,12 +220,18 @@ export default function MainApp() {
     invPrefix: 'INV',
     ownerUid: '',
     autoWhatsApp: false,
+    autoWhatsAppShare: false,
     socialWhatsapp: '',
     socialInstagram: '',
     socialFacebook: '',
+    whatsapp: '',
+    instagram: '',
+    facebook: '',
+    waLink: '',
     businessCategory: 'Retail',
     invoiceTerms: 'Thank you for your business!',
-    currency: '₹'
+    currency: '₹',
+    theme: 'amber'
   });
 
   // Modal State
@@ -261,10 +310,18 @@ export default function MainApp() {
         setInvoices(list.sort((a, b) => b.created.localeCompare(a.created)));
       }, (err) => handleFirestoreError(err, OperationType.LIST, 'invoices'));
 
+      // Fetch Expenses
+      const qExpenses = query(collection(db, 'expenses'), where('ownerUid', '==', user.uid));
+      const unsubExpenses = onSnapshot(qExpenses, (snap) => {
+        const list = snap.docs.map(d => ({ ...d.data(), id: d.id } as Expense));
+        setExpenses(list.sort((a, b) => b.date.localeCompare(a.date)));
+      }, (err) => handleFirestoreError(err, OperationType.LIST, 'expenses'));
+
       return () => {
         unsubCustomers();
         unsubServices();
         unsubInvoices();
+        unsubExpenses();
       };
     }
   }, [isAuthReady, user]);
@@ -307,27 +364,38 @@ export default function MainApp() {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, section: 'Main' },
-    { id: 'billing', label: 'Billing / Invoice', icon: <FileText size={18} />, section: 'Billing' },
-    { id: 'payments', label: 'Payments', icon: <CreditCard size={18} />, section: 'Billing' },
-    { id: 'pos', label: 'POS Billing', icon: <Monitor size={18} />, section: 'Billing' },
+    { id: 'shop-more', label: 'Shop More', icon: <ShoppingBag size={18} />, section: 'Main' },
+    { id: 'pos', label: 'POS Billing', icon: <Zap size={18} />, section: 'Billing' },
+    { id: 'billing', label: 'Smart Billing', icon: <FileText size={18} />, section: 'Billing' },
     { id: 'customers', label: 'Customers', icon: <Users size={18} />, section: 'Business' },
     { id: 'services', label: 'Services', icon: <Wrench size={18} />, section: 'Business' },
-    { id: 'orders', label: 'Orders', icon: <ClipboardList size={18} />, section: 'Business' },
-    { id: 'expenses', label: 'Expenses', icon: <DollarSign size={18} />, section: 'Finance' },
-    { id: 'cashbank', label: 'Cash & Bank', icon: <Building2 size={18} />, section: 'Finance' },
-    { id: 'purchases', label: 'Purchases', icon: <ShoppingCart size={18} />, section: 'Finance' },
-    { id: 'inventory', label: 'Inventory', icon: <Box size={18} />, section: 'Finance' },
+    { id: 'expenses', label: 'Expenses', icon: <CreditCard size={18} />, section: 'Finance' },
     { id: 'reports', label: 'Reports', icon: <TrendingUp size={18} />, section: 'Reports & Tools' },
-    { id: 'staff', label: 'Staff & Payroll', icon: <UserSquare2 size={18} />, section: 'Reports & Tools' },
-    { id: 'sms', label: 'WhatsApp / SMS', icon: <MessageSquare size={18} />, section: 'Reports & Tools' },
+    { id: 'profile', label: 'My Profile', icon: <UserCircle size={18} />, section: 'Account' },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon size={18} />, section: 'Account' },
-    { id: 'backup', label: 'Backup', icon: <Database size={18} />, section: 'Account' },
   ];
 
   const sections = [...new Set(navItems.map(item => item.section))];
 
+  const themeMap = {
+    amber: { orange: '#f59e0b', orange2: '#f59e0b', glow: 'rgba(245, 158, 11, 0.1)' },
+    blue: { orange: '#3b82f6', orange2: '#3b82f6', glow: 'rgba(59, 130, 246, 0.1)' },
+    rose: { orange: '#f43f5e', orange2: '#f43f5e', glow: 'rgba(244, 63, 94, 0.1)' },
+    emerald: { orange: '#10b981', orange2: '#10b981', glow: 'rgba(16, 185, 129, 0.1)' },
+    slate: { orange: '#475569', orange2: '#475569', glow: 'rgba(71, 85, 105, 0.1)' },
+  };
+
+  const currentTheme = themeMap[shopSettings.theme] || themeMap.amber;
+
   return (
-    <div className="flex min-h-screen bg-[var(--bg)] text-[var(--text)]">
+    <div 
+      className={cn("flex min-h-screen bg-[var(--bg)] text-[var(--text)] transition-colors duration-300", isDarkMode ? "" : "light")}
+      style={{
+        '--orange': currentTheme.orange,
+        '--orange2': currentTheme.orange2,
+        '--glow': currentTheme.glow,
+      } as any}
+    >
       {/* Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
@@ -341,19 +409,24 @@ export default function MainApp() {
         "fixed top-0 left-0 bottom-0 w-[248px] bg-[var(--bg2)] border-r border-[var(--border)] z-[200] flex flex-col md:translate-x-0",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="p-[16px_14px_14px] border-b border-[var(--border)]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] rounded-lg flex items-center justify-center shrink-0 shadow-[0_4px_14px_rgba(245,166,35,0.3)]">
-              <svg width="20" height="20" viewBox="0 0 32 32">
-                <rect x="3" y="13" width="26" height="13" rx="4" fill="rgba(255,255,255,0.9)" />
-                <rect x="9" y="5" width="14" height="11" rx="2.5" fill="rgba(255,255,255,0.6)" />
-                <rect x="6" y="19" width="20" height="2.5" rx="1.2" fill="#f5a623" />
-              </svg>
+        <div className="p-6 border-b border-[var(--border)]">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-orange-500 shadow-lg shadow-orange-500/20 flex items-center justify-center text-white font-black text-lg">
+              {shopSettings.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <div className="font-display text-[15px] font-[800]">Umair <b className="text-[var(--orange)]">Bills</b></div>
-              <div className="text-[10px] text-[var(--text2)] mt-px">Billing App</div>
+              <div className="font-black text-sm text-white tracking-tight uppercase truncate max-w-[120px]">{shopSettings.name}</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Premium Partner</div>
             </div>
+          </div>
+          
+          <div className="relative group">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input 
+              type="text" 
+              placeholder="Search..." 
+              className="w-full bg-[var(--bg3)] border border-[var(--border)] rounded-xl py-2.5 pl-9 pr-3 text-xs outline-none focus:border-orange-500 transition-all text-white"
+            />
           </div>
         </div>
 
@@ -432,15 +505,18 @@ export default function MainApp() {
         </header>
 
         {/* Page Body */}
-        <main className="p-6 flex-1">
-          <div>
-            {activeTab === 'dashboard' && <Dashboard setTab={setActiveTab} invoices={invoices} customers={customers} shopSettings={shopSettings} openShareModal={openShareModal} />}
+        <main className="p-6 flex-1 flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 min-w-0">
+            {activeTab === 'dashboard' && <Dashboard setTab={setActiveTab} invoices={invoices} shopSettings={shopSettings} />}
             {activeTab === 'billing' && <Billing invoices={invoices} customers={customers} services={services} shopSettings={shopSettings} showToast={showToast} openShareModal={openShareModal} user={user} />}
+            {activeTab === 'pos' && <POS services={services} customers={customers} shopSettings={shopSettings} showToast={showToast} openShareModal={openShareModal} user={user} />}
             {activeTab === 'customers' && <Customers customers={customers} invoices={invoices} showToast={showToast} user={user} openAddModal={() => setModal({ open: true, title: 'Add New Customer', content: <AddCustomerModal showToast={showToast} user={user} closeModal={closeModal} /> })} />}
             {activeTab === 'services' && <Services services={services} showToast={showToast} user={user} shopSettings={shopSettings} openAddModal={() => setModal({ open: true, title: 'Add New Service', content: <AddServiceModal showToast={showToast} user={user} closeModal={closeModal} /> })} />}
             {activeTab === 'settings' && <Settings shopSettings={shopSettings} showToast={showToast} user={user} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} customers={customers} services={services} invoices={invoices} />}
+            {activeTab === 'reports' && <Reports invoices={invoices} shopSettings={shopSettings} />}
+            {activeTab === 'expenses' && <Expenses expenses={expenses} showToast={showToast} user={user} shopSettings={shopSettings} openAddModal={() => setModal({ open: true, title: 'Add New Expense', content: <AddExpenseModal showToast={showToast} user={user} closeModal={closeModal} /> })} />}
             
-            {!['dashboard', 'billing', 'customers', 'services', 'settings'].includes(activeTab) && (
+            {!['dashboard', 'billing', 'customers', 'services', 'settings', 'reports', 'expenses'].includes(activeTab) && (
               <div className="flex flex-col items-center justify-center py-20 text-[var(--text2)]">
                 <AlertCircle size={48} className="mb-3 opacity-20" />
                 <h3 className="text-lg font-bold">{navItems.find(i => i.id === activeTab)?.label}</h3>
@@ -448,8 +524,113 @@ export default function MainApp() {
               </div>
             )}
           </div>
+
+          {/* Right Side Panel - Only for Dashboard */}
+          {activeTab === 'dashboard' && (
+            <aside className="w-full lg:w-[320px] shrink-0 space-y-6">
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
+                <h3 className="font-display text-[15px] font-[700] mb-4 flex items-center gap-2">
+                  <Zap size={16} className="text-[var(--orange)]" /> Quick Actions
+                </h3>
+                <div className="flex flex-col gap-2.5">
+                  <button onClick={() => setActiveTab('billing')} className="w-full p-3 rounded-xl bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white font-[600] text-[13px] cursor-pointer shadow-md hover:scale-[1.02] transition-all">🧾 New Invoice Banao</button>
+                  <button onClick={() => setActiveTab('customers')} className="w-full p-3 rounded-xl bg-white/5 border border-[var(--border)] text-[var(--text)] font-[600] text-[13px] cursor-pointer hover:bg-white/10 transition-all">👥 Customer Add Karo</button>
+                  <button onClick={() => setActiveTab('reports')} className="w-full p-3 rounded-xl bg-white/5 border border-[var(--border)] text-[var(--text)] font-[600] text-[13px] cursor-pointer hover:bg-white/10 transition-all">📈 Reports Dekho</button>
+                </div>
+              </div>
+
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
+                <h3 className="font-display text-[15px] font-[700] mb-4 flex items-center gap-2">
+                  <Clock size={16} className="text-[var(--blue)]" /> Recent Activity
+                </h3>
+                <div className="space-y-4">
+                  {invoices.slice(0, 4).map((inv, i) => (
+                    <div key={i} className="flex items-center gap-3 group cursor-pointer" onClick={() => openShareModal(inv)}>
+                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-[var(--orange)] group-hover:bg-[var(--orange)] group-hover:text-white transition-all">
+                        <FileText size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-bold truncate">{inv.customerName}</div>
+                        <div className="text-[10px] text-[var(--text3)]">{fmtDate(inv.created)}</div>
+                      </div>
+                      <div className="text-[12px] font-bold text-[var(--orange)]">{fmt(inv.total, shopSettings.currency)}</div>
+                    </div>
+                  ))}
+                  {invoices.length === 0 && <p className="text-[11px] text-[var(--text3)] text-center py-4">Koi activity nahi</p>}
+                </div>
+              </div>
+
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
+                <h3 className="font-display text-[15px] font-[700] mb-4 flex items-center gap-2">
+                  <LayoutDashboard size={16} className="text-[var(--orange)]" /> Reference View
+                </h3>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="aspect-video bg-white/5 rounded-xl border border-dashed border-[var(--border)] flex flex-col items-center justify-center text-[var(--text3)] p-4 text-center">
+                    <p className="text-[10px] font-bold">Screenshot 1</p>
+                    <p className="text-[9px] opacity-50">Upload your old bill layout here</p>
+                  </div>
+                  <div className="aspect-video bg-white/5 rounded-xl border border-dashed border-[var(--border)] flex flex-col items-center justify-center text-[var(--text3)] p-4 text-center">
+                    <p className="text-[10px] font-bold">Screenshot 2</p>
+                    <p className="text-[9px] opacity-50">Reference for POS screen</p>
+                  </div>
+                  <div className="aspect-video bg-white/5 rounded-xl border border-dashed border-[var(--border)] flex flex-col items-center justify-center text-[var(--text3)] p-4 text-center">
+                    <p className="text-[10px] font-bold">Screenshot 3</p>
+                    <p className="text-[9px] opacity-50">Report layout reference</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-linear-to-br from-[rgba(245,166,35,0.1)] to-transparent border border-[rgba(245,166,35,0.2)] rounded-[var(--radius)] p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <ShieldCheck size={16} className="text-[var(--orange)]" />
+                  <span className="text-[12px] font-bold">Pro Tip</span>
+                </div>
+                <p className="text-[11px] text-[var(--text2)] leading-relaxed">
+                  Har bill mein automatic UPI QR code aata hai. Customer se payment lena ab aur bhi aasaan!
+                </p>
+              </div>
+
+              {shopSettings.waLink && (
+                <div className="bg-white/5 border border-[var(--border)] rounded-[var(--radius)] p-5">
+                  <h3 className="font-display text-[15px] font-[700] mb-3 flex items-center gap-2">
+                    <MessageSquare size={16} className="text-[#25d366]" /> Shop WhatsApp
+                  </h3>
+                  <a 
+                    href={`https://${shopSettings.waLink.replace(/^https?:\/\//, '')}`} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="flex items-center justify-between p-3 rounded-xl bg-[#25d366]/10 text-[#25d366] text-xs font-bold hover:bg-[#25d366]/20 transition-all border border-[#25d366]/20"
+                  >
+                    <span>Click to Chat</span>
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+              )}
+            </aside>
+          )}
         </main>
       </div>
+
+      {/* AI Chatbot Button */}
+      <button 
+        onClick={() => setIsChatOpen(true)}
+        className="fixed bottom-6 right-24 w-14 h-14 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-all z-[9998] cursor-pointer group"
+      >
+        <Bot size={28} className="group-hover:rotate-12 transition-transform" />
+        <div className="absolute -top-1 -right-1 w-4 h-4 bg-[var(--green)] rounded-full border-2 border-[var(--bg)] animate-pulse" />
+      </button>
+
+      {/* AI Chatbot Window */}
+      {isChatOpen && (
+        <AIChatBot 
+          onClose={() => setIsChatOpen(false)} 
+          shopSettings={shopSettings}
+          customers={customers}
+          services={services}
+          invoices={invoices}
+          expenses={expenses}
+        />
+      )}
 
       {/* Toast */}
       {toast.show && (
@@ -499,13 +680,26 @@ export default function MainApp() {
 function AddCustomerModal({ showToast, user, closeModal }: { showToast: any, user: User, closeModal: any }) {
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  const [notes, setNotes] = useState('');
+  const [type, setType] = useState<'Regular' | 'VIP'>('Regular');
 
   const save = async () => {
     if (!name || !mobile) return showToast('Name aur Mobile zaroori hain!', 'err');
     try {
       const id = 'C' + Date.now().toString().slice(-6);
-      await setDoc(doc(db, 'customers', id), { id, name, mobile, address, ownerUid: user.uid });
+      await setDoc(doc(db, 'customers', id), { 
+        id, 
+        name, 
+        mobile, 
+        email,
+        address, 
+        notes,
+        type,
+        ownerUid: user.uid,
+        created: new Date().toISOString()
+      });
       showToast('Customer added successfully', 'ok');
       closeModal();
     } catch (err) {
@@ -515,19 +709,38 @@ function AddCustomerModal({ showToast, user, closeModal }: { showToast: any, use
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Name *</label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Name *</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Mobile *</label>
+          <input type="tel" value={mobile} onChange={(e) => setMobile(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+        </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Mobile *</label>
-        <input type="tel" value={mobile} onChange={(e) => setMobile(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@mail.com" className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Customer Type</label>
+          <select value={type} onChange={(e) => setType(e.target.value as 'Regular' | 'VIP')} className="w-full p-3 bg-[var(--bg2)] border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
+            <option value="Regular">Regular</option>
+            <option value="VIP">VIP</option>
+          </select>
+        </div>
       </div>
       <div className="flex flex-col gap-1.5">
         <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Address</label>
-        <textarea value={address} onChange={(e) => setAddress(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)] h-20" />
+        <textarea value={address} onChange={(e) => setAddress(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)] h-16" />
       </div>
-      <button onClick={save} className="w-full bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white py-4 rounded-xl font-bold text-[15px] shadow-lg mt-4 cursor-pointer">Add Customer</button>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Internal Notes</label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any special instruction or details..." className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)] h-16" />
+      </div>
+      <button onClick={save} className="w-full bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white py-4 rounded-xl font-bold text-[15px] shadow-lg mt-2 cursor-pointer">Add Customer</button>
     </div>
   );
 }
@@ -537,12 +750,22 @@ function AddServiceModal({ showToast, user, closeModal }: { showToast: any, user
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [cat, setCat] = useState('Service');
+  const [unit, setUnit] = useState('Unit');
+  const [notes, setNotes] = useState('');
 
   const save = async () => {
     if (!name || !price) return showToast('Name aur Price zaroori hain!', 'err');
     try {
       const id = 'S' + Date.now().toString().slice(-6);
-      await setDoc(doc(db, 'services', id), { id, name, price: parseFloat(price), cat, ownerUid: user.uid });
+      await setDoc(doc(db, 'services', id), { 
+        id, 
+        name, 
+        price: parseFloat(price), 
+        cat, 
+        unit,
+        notes,
+        ownerUid: user.uid 
+      });
       showToast('Service added successfully', 'ok');
       closeModal();
     } catch (err) {
@@ -556,13 +779,23 @@ function AddServiceModal({ showToast, user, closeModal }: { showToast: any, user
         <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Service Name *</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Price (₹) *</label>
-        <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Price (₹) *</label>
+          <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Unit</label>
+          <input type="text" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. Visit, Hr, Qty" className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+        </div>
       </div>
       <div className="flex flex-col gap-1.5">
         <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Category</label>
         <input type="text" value={cat} onChange={(e) => setCat(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Notes</label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Description or additional info..." className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)] h-20" />
       </div>
       <button onClick={save} className="w-full bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white py-4 rounded-xl font-bold text-[15px] shadow-lg mt-4 cursor-pointer">Add Service</button>
     </div>
@@ -570,22 +803,25 @@ function AddServiceModal({ showToast, user, closeModal }: { showToast: any, user
 }
 function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: Invoice, shopSettings: ShopSettings, showToast: any, closeModal: any }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [whatsappCardUrl, setWhatsappCardUrl] = useState<string | null>(null);
   const [view, setView] = useState<'ready' | 'preview'>('ready');
   const [waNumber, setWaNumber] = useState(inv.customerMobile);
 
   const getPortalLink = () => {
     const base = window.location.origin;
-    return `${base}/portal?id=${inv.id}&owner=${inv.ownerUid}`;
+    return `${base}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`;
   };
 
   const portalLink = getPortalLink();
 
   const generatePreview = async () => {
-    if (!cardRef.current || isGenerating) return;
+    if (!cardRef.current || !previewRef.current || isGenerating) return;
     setIsGenerating(true);
     try {
+      // 1. Full Invoice capture for PDF/Download
       const canvas = await html2canvas(cardRef.current, { 
         scale: 2, 
         backgroundColor: '#ffffff',
@@ -595,7 +831,16 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
       });
       const url = canvas.toDataURL('image/png');
       setPreviewUrl(url);
-      return url;
+
+      // 2. WhatsApp special card capture
+      const wsCanvas = await html2canvas(previewRef.current, {
+        scale: 2,
+        backgroundColor: null,
+        useCORS: true,
+        allowTaint: true,
+        logging: false
+      });
+      setWhatsappCardUrl(wsCanvas.toDataURL('image/png'));
     } catch (e) {
       console.error('Preview generation failed:', e);
       showToast('Preview generate karne mein error!', 'err');
@@ -616,7 +861,30 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
   }, [view]);
 
   const shareWA = async () => {
-    const msg = `Hello *${inv.customerName}*\n\nYour invoice is ready.\n\nInvoice Number: *#${inv.id}*\nTotal Amount: *${fmt(inv.total, shopSettings.currency)}*\n\nView Invoice:\n${portalLink}`;
+    const portalLink = getPortalLink();
+    const msg = `🚀 *Invoice Ready!* 🚀\n\nHey *${inv.customerName}*,\n\nThank you for choosing *${shopSettings.name}*! Your invoice #*${inv.id}* is ready.\n\n💰 *Total Amount:* ${fmt(inv.total, shopSettings.currency)}\n📅 *Invoice Date:* ${fmtDate(inv.created)}\n⏳ *Status:* ${inv.status}\n\n👉 *View & Pay Online:* ${portalLink}\n\n${shopSettings.waLink ? `💬 Chat with us: ${shopSettings.waLink}\n` : ''}\nHappy to serve you!\n*${shopSettings.name}*`;
+    
+    // Attempt to share with image if supported (mainly mobile)
+    const activeUrl = whatsappCardUrl || previewUrl;
+    if (navigator.share && activeUrl) {
+      try {
+        const response = await fetch(activeUrl);
+        const blob = await response.blob();
+        const file = new File([blob], `Invoice_${inv.id}.png`, { type: 'image/png' });
+        
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `Invoice #${inv.id}`,
+            text: msg,
+          });
+          return;
+        }
+      } catch (e) {
+        console.error('Sharing failed', e);
+      }
+    }
+
     window.open(`https://wa.me/91${waNumber.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -633,6 +901,14 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
     const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
     pdf.addImage(previewUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
     pdf.save(`Invoice_${inv.id}.pdf`);
+  };
+
+  const downloadImage = () => {
+    if (!previewUrl) return;
+    const link = document.createElement('a');
+    link.href = previewUrl;
+    link.download = `Invoice_${inv.id}.png`;
+    link.click();
   };
 
   const printInvoice = () => {
@@ -654,16 +930,29 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
       {/* Hidden Invoice Card for Capture - ALWAYS RENDERED */}
       <div className="absolute -left-[9999px] top-0 pointer-events-none opacity-0">
         <div ref={cardRef} className="w-[800px] bg-white p-10 text-black border border-gray-200">
-          <div className="flex justify-between items-start mb-8 pb-6 border-b-2 border-[#f5a623]">
-            <div>
-              <div className="text-3xl font-black" style={{ color: '#f5a623' }}>{shopSettings.name}</div>
-              <div className="text-sm font-bold text-gray-500">{shopSettings.owner}</div>
-              <div className="text-xs text-gray-400 mt-2">📞 {shopSettings.phone}</div>
-              <div className="text-xs text-gray-400">📍 {shopSettings.address}</div>
+          <div className="flex justify-between items-start mb-8 pb-6 border-b-2 border-gray-100">
+            <div className="flex gap-4">
+              <div className="w-20 h-20 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-3xl shadow-xl">
+                {shopSettings.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="space-y-1">
+                <div className="text-2xl font-black text-slate-900 uppercase tracking-tight">{shopSettings.name}</div>
+                <div className="text-sm font-bold text-gray-500">{shopSettings.owner}</div>
+                <div className="text-xs text-gray-400 mt-1">📞 {shopSettings.phone}</div>
+                <div className="text-xs text-gray-400">📍 {shopSettings.address}</div>
+                {shopSettings.gst && <div className="text-xs text-gray-400">GSTIN: {shopSettings.gst}</div>}
+              </div>
             </div>
             <div className="text-right">
-              <div className="text-4xl font-black text-gray-200 mb-2"># {inv.id}</div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-orange-50 text-[#ea580c] text-xs font-bold border border-orange-100">
+              <div className="flex flex-col items-end gap-1 mb-4">
+                <div className="text-[28px] font-black text-slate-900 uppercase tracking-tighter leading-none">Bill of Supply</div>
+                <div className="px-2 py-0.5 bg-slate-100 text-[10px] font-black text-slate-500 rounded uppercase tracking-wider">Original for Recipient</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Invoice No.</div>
+                <div className="text-xl font-black text-slate-900">{inv.id}</div>
+              </div>
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 text-[#ea580c] text-[10px] font-black uppercase tracking-wider border border-orange-100">
                 <Clock size={12} /> {inv.status}
               </div>
             </div>
@@ -748,6 +1037,50 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
             </div>
           </div>
         </div>
+
+        {/* SPECIAL WHATSAPP PREVIEW CARD (Matching Screenshot) */}
+        <div ref={previewRef} className="w-[800px] h-[500px] p-8 flex items-center justify-center font-sans" style={{ backgroundColor: '#f87171' }}>
+          <div className="w-full h-full rounded-[40px] p-10 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl" style={{ background: 'radial-gradient(circle at 20% 30%, #f87171 0%, #ef4444 50%, #dc2626 100%)' }}>
+            {/* Patterns */}
+            <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '20px 20px', opacity: 0.1 }}></div>
+            
+            <div className="w-full bg-white rounded-[32px] p-12 flex flex-col items-center text-center shadow-2xl relative z-10 border" style={{ borderColor: 'rgba(255, 255, 255, 0.2)' }}>
+              {/* Decorative line */}
+              <div className="w-32 h-1 rounded-full mb-8" style={{ backgroundColor: 'rgba(234, 179, 8, 0.2)' }}></div>
+              
+              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight mb-8">
+                {shopSettings.name}
+              </h2>
+              
+              <div className="flex flex-col items-center gap-2 mb-8">
+                <span className="text-sm font-black text-slate-400 uppercase tracking-widest">Due Amount</span>
+                <span className="text-6xl font-black text-slate-900 tracking-tighter leading-none">
+                  {fmt(inv.total, shopSettings.currency)}
+                </span>
+              </div>
+              
+              <div className={cn(
+                "px-10 py-2.5 rounded-full text-sm font-black uppercase tracking-widest shadow-md mb-12 text-white",
+                inv.status === 'Paid' ? "bg-green-500" : "bg-red-500"
+              )} style={{ backgroundColor: inv.status === 'Paid' ? '#22c55e' : '#ef4444' }}>
+                {inv.status}
+              </div>
+              
+              <div className="text-sm font-bold text-slate-400 mb-8 space-x-2">
+                <span>Invoice Date :</span>
+                <span className="text-slate-700">{fmtDate(inv.created)}</span>
+              </div>
+              
+              <div className="pt-8 border-t border-slate-100 w-full flex items-center justify-center gap-2">
+                <span className="text-[10px] font-bold text-slate-300">Created by</span>
+                <div className="flex items-center gap-1 opacity-40">
+                  <div className="w-4 h-4 bg-orange-500 rounded-sm flex items-center justify-center text-white font-black text-[6px]">UB</div>
+                  <span className="font-black text-[10px] text-slate-900 leading-none tracking-tighter">my<span className="text-orange-500 italic">BillBook</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {view === 'preview' ? (
@@ -771,18 +1104,21 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-5 gap-3">
             <button onClick={() => setView('ready')} className="p-3 bg-white/5 border border-white/10 text-[var(--text2)] rounded-xl font-bold text-[13px] flex items-center justify-center cursor-pointer">
               <X size={18} />
             </button>
-            <button onClick={downloadPDF} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer">
-              <Download size={18} /> PDF
+            <button onClick={downloadPDF} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer" title="Download PDF">
+              <Download size={18} />
             </button>
-            <button onClick={printInvoice} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer">
-              <Printer size={18} /> Print
+            <button onClick={downloadImage} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer" title="Download Image">
+              <ImageIcon size={18} />
+            </button>
+            <button onClick={printInvoice} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer" title="Print Invoice">
+              <Printer size={18} />
             </button>
             <button onClick={shareWA} className="col-span-1 p-3 bg-[#25d366] text-white rounded-xl font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer">
-              <MessageSquare size={18} fill="white" /> WhatsApp
+              <MessageSquare size={18} fill="white" /> WA
             </button>
           </div>
         </div>
@@ -842,12 +1178,15 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
               <MessageSquare size={22} fill="white" /> Send Invoice on WhatsApp
             </button>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <button onClick={() => setView('preview')} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[12px] flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10">
                 <Eye size={16} /> View
               </button>
               <button onClick={downloadPDF} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[12px] flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10">
                 <Download size={16} /> PDF
+              </button>
+              <button onClick={downloadImage} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[12px] flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10">
+                <ImageIcon size={16} /> IMG
               </button>
               <button onClick={printInvoice} className="p-3 bg-white/5 border border-white/10 text-[var(--text)] rounded-xl font-bold text-[12px] flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10">
                 <Printer size={16} /> Print
@@ -863,7 +1202,18 @@ function ShareModalContent({ inv, shopSettings, showToast, closeModal }: { inv: 
 // --- Customers Component ---
 function Customers({ customers, invoices, showToast, user, openAddModal }: { customers: Customer[], invoices: Invoice[], showToast: any, user: User, openAddModal: any }) {
   const [search, setSearch] = useState('');
-  const filtered = customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.mobile.includes(search));
+  const [typeFilter, setTypeFilter] = useState<'All' | 'Regular' | 'VIP'>('All');
+
+  const filtered = customers.filter(c => {
+    const matchesSearch = 
+      c.name.toLowerCase().includes(search.toLowerCase()) || 
+      c.mobile.includes(search) || 
+      (c.email && c.email.toLowerCase().includes(search.toLowerCase()));
+    
+    const matchesType = typeFilter === 'All' || c.type === typeFilter;
+    
+    return matchesSearch && matchesType;
+  });
 
   const deleteCustomer = async (id: string) => {
     if (confirm('Are you sure you want to delete this customer?')) {
@@ -892,16 +1242,28 @@ function Customers({ customers, invoices, showToast, user, openAddModal }: { cus
       </div>
 
       <div className="bg-[var(--bg2)] border border-[var(--border)] rounded-2xl overflow-hidden">
-        <div className="p-4 border-b border-[var(--border)] bg-white/5">
-          <div className="flex items-center bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] gap-2 max-w-md">
+        <div className="p-4 border-b border-[var(--border)] bg-white/5 flex flex-col sm:flex-row gap-4">
+          <div className="flex items-center bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] gap-2 flex-1 max-w-md">
             <Search size={16} className="text-[var(--text2)]" />
             <input 
               type="text" 
-              placeholder="Search by name or mobile..." 
+              placeholder="Search by name, mobile, or email..." 
               className="bg-transparent border-none outline-none text-[14px] text-[var(--text)] w-full font-sans"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-bold text-[var(--text3)] uppercase">Show:</span>
+            <select 
+              value={typeFilter} 
+              onChange={(e) => setTypeFilter(e.target.value as any)}
+              className="bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] text-[13px] outline-none text-[var(--text)]"
+            >
+              <option value="All">All Customers</option>
+              <option value="Regular">Regular Only</option>
+              <option value="VIP">VIP Only</option>
+            </select>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -909,8 +1271,9 @@ function Customers({ customers, invoices, showToast, user, openAddModal }: { cus
             <thead>
               <tr className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider border-b border-[var(--border)]">
                 <th className="p-4 pl-6">Customer</th>
-                <th className="p-4">Mobile</th>
+                <th className="p-4">Contact</th>
                 <th className="p-4">Type</th>
+                <th className="p-4">Notes</th>
                 <th className="p-4">Total Bills</th>
                 <th className="p-4 pr-6 text-right">Actions</th>
               </tr>
@@ -922,16 +1285,22 @@ function Customers({ customers, invoices, showToast, user, openAddModal }: { cus
                     <div className="font-bold">{c.name}</div>
                     <div className="text-[11px] text-[var(--text3)]">{c.address}</div>
                   </td>
-                  <td className="p-4 font-mono text-[var(--text2)]">{c.mobile}</td>
+                  <td className="p-4">
+                    <div className="font-mono text-[var(--text2)]">{c.mobile}</div>
+                    <div className="text-[11px] text-[var(--text3)]">{c.email || 'No email'}</div>
+                  </td>
                   <td className="p-4">
                     <span className={cn(
                       "px-2 py-0.5 rounded-md text-[10px] font-bold uppercase",
                       c.type === 'VIP' ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/20 text-blue-400"
                     )}>{c.type}</span>
                   </td>
+                  <td className="p-4 max-w-[200px] truncate text-[var(--text3)] italic">
+                    {c.notes || '-'}
+                  </td>
                   <td className="p-4 font-bold">{invoices.filter(inv => inv.customerMobile === c.mobile).length}</td>
                   <td className="p-4 pr-6 text-right">
-                    <button className="p-2 text-[var(--text2)] hover:text-[var(--orange)] cursor-pointer"><SettingsIcon size={16} /></button>
+                    <button onClick={() => deleteCustomer(c.id)} className="p-2 text-[var(--text2)] hover:text-red-500 cursor-pointer"><Trash2 size={16} /></button>
                   </td>
                 </tr>
               ))}
@@ -946,7 +1315,19 @@ function Customers({ customers, invoices, showToast, user, openAddModal }: { cus
 // --- Services Component ---
 function Services({ services, showToast, user, openAddModal, shopSettings }: { services: Service[], showToast: any, user: User, openAddModal: any, shopSettings: ShopSettings }) {
   const [search, setSearch] = useState('');
-  const filtered = services.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.cat.toLowerCase().includes(search.toLowerCase()));
+  const [catFilter, setCatFilter] = useState('All');
+
+  const categories = ['All', ...Array.from(new Set(services.map(s => s.cat)))];
+
+  const filtered = services.filter(s => {
+    const matchesSearch = s.name.toLowerCase().includes(search.toLowerCase()) || 
+                         s.cat.toLowerCase().includes(search.toLowerCase()) ||
+                         (s.notes && s.notes.toLowerCase().includes(search.toLowerCase()));
+    
+    const matchesCat = catFilter === 'All' || s.cat === catFilter;
+    
+    return matchesSearch && matchesCat;
+  });
 
   const deleteService = async (id: string) => {
     if (confirm('Are you sure you want to delete this service?')) {
@@ -975,16 +1356,26 @@ function Services({ services, showToast, user, openAddModal, shopSettings }: { s
       </div>
 
       <div className="bg-[var(--bg2)] border border-[var(--border)] rounded-2xl overflow-hidden">
-        <div className="p-4 border-b border-[var(--border)] bg-white/5">
-          <div className="flex items-center bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] gap-2 max-w-md">
+        <div className="p-4 border-b border-[var(--border)] bg-white/5 flex flex-col sm:flex-row gap-4">
+          <div className="flex items-center bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] gap-2 flex-1 max-w-md">
             <Search size={16} className="text-[var(--text2)]" />
             <input 
               type="text" 
-              placeholder="Search services..." 
+              placeholder="Search services or notes..." 
               className="bg-transparent border-none outline-none text-[14px] text-[var(--text)] w-full font-sans"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-bold text-[var(--text3)] uppercase">Category:</span>
+            <select 
+              value={catFilter} 
+              onChange={(e) => setCatFilter(e.target.value)}
+              className="bg-[var(--bg3)] border border-[var(--border)] rounded-lg p-[8px_14px] text-[13px] outline-none text-[var(--text)]"
+            >
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -993,6 +1384,7 @@ function Services({ services, showToast, user, openAddModal, shopSettings }: { s
               <tr className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider border-b border-[var(--border)]">
                 <th className="p-4 pl-6">Service Name</th>
                 <th className="p-4">Category</th>
+                <th className="p-4">Notes</th>
                 <th className="p-4">Price</th>
                 <th className="p-4">Unit</th>
                 <th className="p-4 pr-6 text-right">Actions</th>
@@ -1005,10 +1397,13 @@ function Services({ services, showToast, user, openAddModal, shopSettings }: { s
                   <td className="p-4">
                     <span className="bg-white/5 border border-white/10 px-2 py-0.5 rounded-md text-[11px] text-[var(--text2)]">{s.cat}</span>
                   </td>
+                  <td className="p-4 text-[var(--text3)] italic max-w-[200px] truncate">
+                    {s.notes || '-'}
+                  </td>
                   <td className="p-4 font-bold text-[var(--orange)]">{fmt(s.price, shopSettings.currency)}</td>
                   <td className="p-4 text-[var(--text3)] uppercase text-[11px] font-bold">{s.unit}</td>
                   <td className="p-4 pr-6 text-right">
-                    <button className="p-2 text-[var(--text2)] hover:text-[var(--orange)] cursor-pointer"><SettingsIcon size={16} /></button>
+                    <button onClick={() => deleteService(s.id)} className="p-2 text-[var(--text2)] hover:text-red-500 cursor-pointer"><Trash2 size={16} /></button>
                   </td>
                 </tr>
               ))}
@@ -1021,142 +1416,622 @@ function Services({ services, showToast, user, openAddModal, shopSettings }: { s
 }
 
 function LoginScreen({ onLogin, showToast }: { onLogin: () => void, showToast: (m: string, t?: any) => void }) {
-  return (
-    <div className="min-h-screen grid md:grid-cols-2 bg-[var(--dark)]">
-      <div className="hidden md:flex flex-col items-center justify-center p-12 bg-linear-to-br from-[#090b12] via-[#111628] to-[#0d1020] border-r border-[var(--border)] relative overflow-hidden">
-        <div className="absolute top-[-150px] right-[-150px] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(245,166,35,0.08)_0%,transparent_65%)] pointer-events-none"></div>
-        <div className="text-center mb-12 relative">
-          <div className="w-20 h-20 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] rounded-[22px] inline-flex items-center justify-center mb-5 shadow-[0_16px_48px_rgba(245,166,35,0.35)]">
-            <svg width="44" height="44" viewBox="0 0 48 48">
-              <rect x="4" y="18" width="40" height="20" rx="5" fill="rgba(255,255,255,0.95)" />
-              <rect x="12" y="6" width="24" height="16" rx="3" fill="rgba(255,255,255,0.7)" />
-              <rect x="14" y="28" width="20" height="3" rx="1.5" fill="#f5a623" />
-              <rect x="14" y="34" width="14" height="3" rx="1.5" fill="#f5a623" opacity="0.6" />
-              <circle cx="37" cy="25" r="3" fill="#f5a623" />
-            </svg>
-          </div>
-          <h1 className="text-[38px] font-[900] text-white tracking-[-1.5px] leading-none">Umair <b className="text-[var(--orange)]">Bills</b></h1>
-          <p className="text-white/40 text-[14px] mt-2">India ka Smart Billing App</p>
-        </div>
-        <div className="flex flex-col gap-3 w-full max-w-[300px]">
-          {[
-            { icon: "🧾", title: "Instant Invoice", desc: "8 second mein bill ready" },
-            { icon: "💬", title: "WhatsApp Auto Send", desc: "Customer ko turant bhejo" },
-            { icon: "📱", title: "UPI QR Code", desc: "Scan karke instant payment" },
-            { icon: "📊", title: "Reports & Analytics", desc: "Sales, expenses, profit sab" }
-          ].map((f, i) => (
-            <div key={i} className="flex items-center gap-3.5 p-[13px_16px] bg-white/5 border border-white/10 rounded-xl">
-              <span className="text-[22px] shrink-0">{f.icon}</span>
-              <div>
-                <h4 className="text-[13px] font-[600] text-white">{f.title}</h4>
-                <p className="text-[11px] text-white/40">{f.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+  const [mobile, setMobile] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState('');
 
-      <div className="flex items-center justify-center p-12 bg-[var(--bg2)]">
-        <div className="w-full max-w-[400px] text-center">
-          <div className="mb-8">
-            <h2 className="text-[32px] font-[900] mb-2">Swagat Hai! 👋</h2>
-            <p className="text-[15px] text-[var(--text2)]">Apne account mein login karein shuru karne ke liye.</p>
+  const handleGetOTP = () => {
+    if (mobile.length < 10) return showToast('Valid Mobile Number enter karein!', 'err');
+    setOtpSent(true);
+    showToast('Demo OTP: 1234 se login karein', 'ok');
+  };
+
+  const handleVerifyOTP = () => {
+    if (otp === '1234') {
+      onLogin(); // In a real app we'd verify with Firebase, here we use demo logic
+    } else {
+      showToast('Galat OTP! Demo OTP "1234" use karein.', 'err');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-800">
+      <div className="w-full max-w-[420px] bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+        <div className="p-8">
+          <div className="flex justify-center mb-8">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-orange-500 rounded flex items-center justify-center text-white font-black text-xs">UB</div>
+              <span className="font-black text-xl text-slate-900 leading-none">my<span className="text-orange-500 italic">BillBook</span></span>
+              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+            </div>
           </div>
-          
-          <button 
-            onClick={onLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white text-black py-4 rounded-2xl font-bold text-[16px] shadow-xl cursor-pointer"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" />
-            Continue with Google
-          </button>
-          
-          <p className="mt-8 text-[11px] text-[var(--text3)] max-w-[280px] mx-auto leading-relaxed">
-            By continuing, you agree to our <span className="text-[var(--orange)]">Terms of Service</span> and <span className="text-[var(--orange)]">Privacy Policy</span>.
-          </p>
+
+          {!otpSent ? (
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-black text-slate-900">Enter Your Mobile Number</h2>
+                <p className="text-xs font-bold text-slate-400 leading-relaxed px-4">
+                  To access your invoices and ledgers, enter your mobile number. We'll send you a verification code.
+                </p>
+              </div>
+
+              <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-100 transition-all">
+                <div className="p-4 bg-slate-50 border-r border-slate-100 text-sm font-bold text-slate-500">+91</div>
+                <input 
+                  type="tel" 
+                  value={mobile}
+                  onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="Mobile Number" 
+                  className="w-full p-4 text-sm font-bold outline-none"
+                />
+              </div>
+
+              <button 
+                onClick={handleGetOTP}
+                className="w-full py-4 bg-slate-50 text-slate-300 font-black rounded-xl text-sm cursor-pointer hover:bg-slate-100 hover:text-slate-500 transition-all"
+                style={{ backgroundColor: mobile.length === 10 ? '#f5a623' : '', color: mobile.length === 10 ? 'white' : '' }}
+              >
+                Get OTP
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-black text-slate-900">Verify OTP</h2>
+                <p className="text-xs font-bold text-slate-400 leading-relaxed">
+                  We've sent a code to <span className="text-slate-800">+91 {mobile}</span>
+                </p>
+              </div>
+
+              <div className="flex justify-center gap-2">
+                <input 
+                  type="text" 
+                  maxLength={4}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                  className="w-40 p-4 border border-slate-200 rounded-xl text-center text-2xl font-black tracking-[1rem] outline-none focus:border-orange-500 transition-all"
+                  placeholder="----"
+                />
+              </div>
+
+              <button 
+                onClick={handleVerifyOTP}
+                className="w-full py-4 bg-orange-500 text-white font-black rounded-xl text-sm shadow-lg shadow-orange-100 cursor-pointer"
+              >
+                Verify & Login
+              </button>
+
+              <button onClick={() => setOtpSent(false)} className="w-full text-xs font-bold text-slate-400 hover:text-orange-500 cursor-pointer">
+                Change Mobile Number?
+              </button>
+            </div>
+          )}
+
+          <div className="mt-8 text-center">
+            <p className="text-[10px] font-bold text-slate-400">
+              By continuing you agree to the <span className="text-slate-800 underline">myBillBook</span> <span className="text-orange-500 underline cursor-pointer">Terms & Conditions</span>
+            </p>
+          </div>
+
+          <div className="mt-12 pt-8 border-t border-slate-100 flex flex-col items-center gap-4">
+             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Or Login with</p>
+             <button onClick={onLogin} className="flex items-center gap-3 px-6 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-all cursor-pointer">
+               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+               <span className="text-xs font-black text-slate-800">Google Login</span>
+             </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-function Dashboard({ setTab, invoices, customers, shopSettings, openShareModal }: { setTab: (t: string) => void, invoices: Invoice[], customers: Customer[], shopSettings: ShopSettings, openShareModal: any }) {
+function Dashboard({ setTab, invoices, shopSettings }: { setTab: (t: string) => void, invoices: Invoice[], shopSettings: ShopSettings }) {
   const todayStr = today();
   const month = todayStr.slice(0, 7);
+  
   const todaySales = invoices.filter(i => i.created === todayStr).reduce((a, b) => a + b.total, 0);
   const monthSales = invoices.filter(i => i.created?.startsWith(month)).reduce((a, b) => a + b.total, 0);
   const unpaidAmt = invoices.filter(i => i.status === 'Pending').reduce((a, b) => a + b.total, 0);
-  const pendingOrders = 0; // Mock
+  const paidRevenue = invoices.filter(i => i.status === 'Paid').reduce((a, b) => a + b.total, 0);
+
+  // Chart Data
+  const monthlyData = invoices.reduce((acc: any, inv) => {
+    const m = new Date(inv.created).toLocaleString('default', { month: 'short' });
+    if (!acc[m]) acc[m] = { name: m, revenue: 0 };
+    acc[m].revenue += inv.total;
+    return acc;
+  }, {});
+  const chartData = Object.values(monthlyData);
+
+  const serviceStats = invoices.flatMap(inv => inv.items).reduce((acc: any, item) => {
+    if (!acc[item.serviceName]) acc[item.serviceName] = 0;
+    acc[item.serviceName] += item.qty;
+    return acc;
+  }, {});
+  const topServices = Object.entries(serviceStats)
+    .map(([name, qty]) => ({ name, qty: qty as number }))
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 5);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 animate-in fade-in duration-700">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-[22px] font-[800]">Namaste {shopSettings.owner}! 👋</h2>
-          <p className="text-[13px] text-[var(--text2)]">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</p>
+          <h2 className="text-[22px] font-[900] tracking-tight">Namaste {shopSettings.owner}! 👋</h2>
+          <p className="text-[11px] font-black uppercase text-[var(--text3)] tracking-widest mt-1">
+            {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+          </p>
         </div>
-        <button onClick={() => setTab('billing')} className="bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white px-5 py-2.5 rounded-lg text-[13px] font-[600] shadow-lg cursor-pointer">🧾 New Invoice</button>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard color="orange" icon="💰" val={fmt(todaySales, shopSettings.currency)} label="Aaj ki Sales" />
-        <StatCard color="green" icon="📅" val={fmt(monthSales, shopSettings.currency)} label="Is Mahine ki Sales" />
-        <StatCard color="blue" icon="⏳" val={fmt(unpaidAmt, shopSettings.currency)} label="Unpaid Amount" />
-        <StatCard color="red" icon="📋" val={String(pendingOrders)} label="Pending Orders" />
+        {[
+          { label: 'Aaj ki Sales', val: todaySales, icon: IndianRupee, color: 'amber' },
+          { label: 'Monthly Sales', val: monthSales, icon: TrendingUp, color: 'blue' },
+          { label: 'Unpaid Udhaar', val: unpaidAmt, icon: Clock, color: 'rose' },
+          { label: 'Total Paid', val: paidRevenue, icon: Wallet, color: 'emerald' },
+        ].map((s, i) => (
+          <div key={i} className="bg-[var(--card)] border border-[var(--border)] p-5 rounded-[var(--radius)] hover:translate-y-[-2px] transition-all group">
+            <div className={cn(
+              "p-2 rounded-lg w-fit mb-3 transition-colors",
+              s.color === 'amber' ? "bg-amber-500/10 text-amber-500" : 
+              s.color === 'blue' ? "bg-blue-500/10 text-blue-500" : 
+              s.color === 'rose' ? "bg-rose-500/10 text-rose-500" : "bg-emerald-500/10 text-emerald-500"
+            )}>
+              <s.icon size={18} />
+            </div>
+            <div className="text-[var(--text3)] text-[10px] font-black uppercase tracking-widest">{s.label}</div>
+            <div className="text-[22px] font-black mt-1 leading-none">{fmt(s.val, shopSettings.currency)}</div>
+          </div>
+        ))}
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
-          <h3 className="font-display text-[15px] font-[700] mb-4">📊 Sales Overview</h3>
-          <div className="h-[200px] flex items-center justify-center text-[var(--text3)]">
-            Chart Placeholder (Chart.js integration)
+      <div className="grid lg:grid-cols-7 gap-6">
+        <div className="lg:col-span-4 bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
+          <h3 className="font-display text-[15px] font-[700] mb-6">📈 Revenue History</h3>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--orange)" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="var(--orange)" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="name" stroke="var(--text3)" fontSize={10} axisLine={false} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', fontSize: '12px' }}
+                  itemStyle={{ color: 'var(--orange)' }}
+                />
+                <Area type="monotone" dataKey="revenue" stroke="var(--orange)" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
-          <h3 className="font-display text-[15px] font-[700] mb-4">💡 Quick Actions</h3>
-          <div className="flex flex-col gap-2.5">
-            <button onClick={() => setTab('billing')} className="w-full p-3 rounded-xl bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white font-[600] text-[13px] cursor-pointer">🧾 New Invoice Banao</button>
-            <button onClick={() => setTab('customers')} className="w-full p-3 rounded-xl bg-[rgba(34,197,94,0.12)] text-[var(--green)] border border-[rgba(34,197,94,0.25)] font-[600] text-[13px] cursor-pointer">👥 Customer Add Karo</button>
-            <button onClick={() => setTab('orders')} className="w-full p-3 rounded-xl bg-[rgba(59,130,246,0.12)] text-[var(--blue)] border border-[rgba(59,130,246,0.25)] font-[600] text-[13px] cursor-pointer">📋 Orders Dekho</button>
-            <button onClick={() => setTab('reports')} className="w-full p-3 rounded-xl bg-[var(--bg3)] text-[var(--text)] border border-[var(--border)] font-[600] text-[13px] cursor-pointer">📈 Reports Dekho</button>
+
+        <div className="lg:col-span-3 bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
+          <h3 className="font-display text-[15px] font-[700] mb-6">🔥 Top Items Sold</h3>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topServices} layout="vertical" margin={{ left: 20 }}>
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" stroke="var(--text2)" fontSize={10} width={80} axisLine={false} tickLine={false} />
+                <Tooltip 
+                   cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                   contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', fontSize: '10px' }}
+                />
+                <Bar dataKey="qty" fill="var(--orange)" radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
-          <h3 className="font-display text-[15px] font-[700] mb-4">🧾 Recent Invoices</h3>
-          <div className="divide-y divide-[var(--border)]">
-            {invoices.slice(-5).reverse().map((inv, i) => (
-              <div key={i} className="py-3 flex justify-between items-center">
-                <div>
-                  <div className="text-[13px] font-[600]">{inv.customerName}</div>
-                  <div className="text-[11px] text-[var(--text2)]">{inv.id} · {fmtDate(inv.created)}</div>
-                </div>
-                <div className="text-right flex flex-col items-end gap-1">
-                  <div className="text-[14px] font-[700] text-[var(--orange)]">{fmt(inv.total, shopSettings.currency)}</div>
-                  <div className="flex items-center gap-2">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-display text-[15px] font-[700]">🧾 Recent Invoices</h3>
+          <button onClick={() => setTab('billing')} className="text-[10px] font-black uppercase text-[var(--orange)] hover:underline tracking-widest">View All</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="text-[10px] font-black text-[var(--text3)] uppercase tracking-wider border-b border-[var(--border)]">
+                <th className="pb-3 text-center w-12">#</th>
+                <th className="pb-3">Customer</th>
+                <th className="pb-3">Date</th>
+                <th className="pb-3">Total</th>
+                <th className="pb-3 text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {invoices.slice(0, 5).map((inv, i) => (
+                <tr key={i} className="text-[13px] group hover:bg-white/5 transition-colors">
+                  <td className="py-4 text-center font-bold text-[var(--text3)]">#{inv.id}</td>
+                  <td className="py-4 font-bold">{inv.customerName}</td>
+                  <td className="py-4 text-[var(--text3)]">{fmtDate(inv.created)}</td>
+                  <td className="py-4 font-black">{fmt(inv.total, shopSettings.currency)}</td>
+                  <td className="py-4 text-right">
                     <span className={cn(
-                      "text-[10px] font-[700] px-2 py-0.5 rounded-full",
+                      "text-[9px] font-black px-2 py-0.5 rounded-full uppercase",
                       inv.status === 'Paid' ? "bg-green-500/10 text-green-500" : "bg-orange-500/10 text-orange-500"
                     )}>{inv.status}</span>
-                    <button onClick={() => openShareModal(inv)} className="p-1 text-[var(--text2)] hover:text-[var(--orange)] cursor-pointer" title="View Invoice">
-                      <Eye size={14} />
-                    </button>
-                  </div>
-                </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- POS Component ---
+function POS({ services, customers, shopSettings, showToast, openShareModal, user }: { services: Service[], customers: Customer[], shopSettings: ShopSettings, showToast: any, openShareModal: any, user: User }) {
+  const [cart, setCart] = useState<any[]>([]);
+  const [selectedCust, setSelectedCust] = useState<string>('');
+  const [search, setSearch] = useState('');
+
+  const addToCart = (s: Service) => {
+    const existing = cart.find(i => i.id === s.id);
+    if (existing) {
+      setCart(cart.map(i => i.id === s.id ? { ...i, qty: i.qty + 1 } : i));
+    } else {
+      setCart([...cart, { ...s, qty: 1 }]);
+    }
+  };
+
+  const total = cart.reduce((a, b) => a + (b.price * b.qty), 0);
+
+  const handleCheckout = async () => {
+    if (cart.length === 0) return showToast('Cart khali hai!', 'error');
+    const invId = 'INV-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const cust = customers.find(c => c.id === selectedCust);
+    const newInv: Invoice = {
+      id: invId,
+      customerId: selectedCust || 'walk-in',
+      customerName: cust?.name || 'Walk-in Customer',
+      customerMobile: cust?.mobile || '',
+      customerAddress: cust?.address || '',
+      customerEmail: cust?.email || '',
+      items: cart.map(i => ({ serviceId: i.id, serviceName: i.name, qty: i.qty, rate: i.price, amount: i.price * i.qty })),
+      subtotal: total,
+      discount: 0,
+      discountAmount: 0,
+      gst: 0,
+      gstPct: 0,
+      total: total,
+      payMode: 'Cash',
+      status: 'Paid',
+      created: today(),
+      ownerUid: user.uid
+    };
+
+    try {
+      await setDoc(doc(db, 'invoices', invId), newInv);
+      showToast('POS Bill Generated!', 'success');
+      setCart([]);
+      openShareModal(newInv);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'invoices');
+    }
+  };
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-180px)]">
+      <div className="flex-1 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 flex flex-col">
+        <div className="relative mb-6">
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text3)]" />
+          <input 
+            type="text" 
+            placeholder="Search services..." 
+            className="w-full pl-12 pr-4 py-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none focus:border-[var(--orange)]"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-4 pr-2">
+          {services.filter(s => s.name.toLowerCase().includes(search.toLowerCase())).map((s, i) => (
+            <button key={i} onClick={() => addToCart(s)} className="p-4 bg-white/5 border border-[var(--border)] rounded-xl text-left hover:border-[var(--orange)] transition-all group cursor-pointer">
+              <div className="text-[13px] font-bold mb-1 truncate">{s.name}</div>
+              <div className="text-[14px] font-black text-[var(--orange)]">{fmt(s.price, shopSettings.currency)}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="w-full lg:w-[380px] bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 flex flex-col shadow-xl">
+        <h3 className="font-display text-[17px] font-black mb-6">🛒 Current Order</h3>
+        <div className="mb-6">
+          <label className="text-[10px] font-black text-[var(--text3)] uppercase tracking-widest mb-2 block">Customer Selection</label>
+          <select 
+            value={selectedCust} 
+            onChange={(e) => setSelectedCust(e.target.value)}
+            className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none"
+          >
+            <option value="">Walk-in Customer</option>
+            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-4 mb-6 pr-2">
+          {cart.map((item, i) => (
+            <div key={i} className="flex justify-between items-center bg-white/2 p-3 rounded-xl border border-white/5">
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] font-bold truncate">{item.name}</div>
+                <div className="text-[10px] text-[var(--text3)]">{item.qty} x {fmt(item.price, shopSettings.currency)}</div>
               </div>
-            ))}
-            {invoices.length === 0 && <p className="py-10 text-center text-[var(--text3)]">Koi invoice nahi</p>}
+              <div className="flex items-center gap-3">
+                <div className="text-[13px] font-black">{fmt(item.price * item.qty, shopSettings.currency)}</div>
+                <button onClick={() => setCart(cart.filter(c => c.id !== item.id))} className="text-[var(--red)] p-1 hover:bg-red-500/10 rounded-lg transition-all cursor-pointer"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+          {cart.length === 0 && <div className="text-center py-10 text-[var(--text3)] opacity-50">Cart khali hai</div>}
+        </div>
+        <div className="pt-6 border-t border-[var(--border)] space-y-3">
+          <div className="flex justify-between text-[14px] font-bold text-[var(--text2)]">
+            <span>Subtotal</span>
+            <span>{fmt(total, shopSettings.currency)}</span>
+          </div>
+          <div className="flex justify-between text-[20px] font-black text-[var(--orange)]">
+            <span>Total</span>
+            <span>{fmt(total, shopSettings.currency)}</span>
+          </div>
+          <button onClick={handleCheckout} className="w-full py-4 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white font-black rounded-xl shadow-lg shadow-orange-500/20 hover:scale-[1.02] transition-all cursor-pointer mt-4">
+            CHECKOUT — {fmt(total, shopSettings.currency)}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Reports Component ---
+function Reports({ invoices, shopSettings }: { invoices: Invoice[], shopSettings: ShopSettings }) {
+  const salesByDate = invoices.reduce((acc: any, inv) => {
+    const date = inv.created;
+    acc[date] = (acc[date] || 0) + inv.total;
+    return acc;
+  }, {});
+
+  const chartData = Object.keys(salesByDate).sort().map(date => ({
+    date: fmtDate(date),
+    amount: salesByDate[date]
+  })).slice(-7);
+
+  const serviceStats = invoices.reduce((acc: any, inv) => {
+    inv.items.forEach(it => {
+      acc[it.serviceName] = (acc[it.serviceName] || 0) + it.qty;
+    });
+    return acc;
+  }, {});
+
+  const pieData = Object.keys(serviceStats).map(name => ({
+    name,
+    value: serviceStats[name]
+  })).sort((a, b) => b.value - a.value).slice(0, 5);
+
+  const COLORS = ['#f5a623', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6'];
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-black tracking-tight">Reports & Analytics</h2>
+      
+      <div className="grid lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+          <h3 className="font-bold mb-6 flex items-center gap-2">
+            <TrendingUp size={18} className="text-[var(--orange)]" /> Last 7 Days Sales
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorAmt" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f5a623" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#f5a623" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="date" stroke="var(--text3)" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text3)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px' }}
+                  itemStyle={{ color: 'var(--orange)', fontWeight: 'bold' }}
+                />
+                <Area type="monotone" dataKey="amount" stroke="#f5a623" strokeWidth={3} fillOpacity={1} fill="url(#colorAmt)" />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-5">
-          <h3 className="font-display text-[15px] font-[700] mb-4">📦 Pending Orders</h3>
-          <div className="flex flex-col items-center justify-center py-10 text-[var(--green)]">
-            <CheckCircle2 size={32} className="mb-2 opacity-40" />
-            <p className="text-[13px]">✅ Sab kuch deliver ho gaya!</p>
+
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+          <h3 className="font-bold mb-6 flex items-center gap-2">
+            <TrendingUp size={18} className="text-[var(--blue)]" /> Top Services
+          </h3>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 space-y-2">
+            {pieData.map((d, i) => (
+              <div key={i} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                  <span className="text-[var(--text2)] truncate max-w-[120px]">{d.name}</span>
+                </div>
+                <span className="font-bold">{d.value} sales</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Expenses Component ---
+function Expenses({ expenses, showToast, user, shopSettings, openAddModal }: { expenses: Expense[], showToast: any, user: User, shopSettings: ShopSettings, openAddModal: any }) {
+  const deleteExpense = async (id: string) => {
+    if (confirm('Are you sure you want to delete this expense?')) {
+      try {
+        await deleteDoc(doc(db, 'expenses', id));
+        showToast('Expense deleted', 'ok');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `expenses/${id}`);
+      }
+    }
+  };
+
+  const totalExpenses = expenses.reduce((a, b) => a + b.amount, 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Expenses</h2>
+          <p className="text-[13px] text-[var(--text2)]">Track your business spending.</p>
+        </div>
+        <button 
+          onClick={openAddModal}
+          className="bg-[var(--red)] text-white px-5 py-2.5 rounded-xl font-bold text-[14px] flex items-center gap-2 shadow-lg cursor-pointer"
+        >
+          <Plus size={18} /> Add Expense
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="md:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-white/5 text-[11px] font-black uppercase tracking-widest text-[var(--text3)]">
+                <th className="p-4">Title</th>
+                <th className="p-4">Category</th>
+                <th className="p-4">Date</th>
+                <th className="p-4 text-right">Amount</th>
+                <th className="p-4"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {expenses.map((ex, i) => (
+                <tr key={i} className="hover:bg-white/2 transition-colors">
+                  <td className="p-4 text-[13px] font-bold">{ex.title}</td>
+                  <td className="p-4">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 border border-white/10">{ex.category}</span>
+                  </td>
+                  <td className="p-4 text-[12px] text-[var(--text3)]">{fmtDate(ex.date)}</td>
+                  <td className="p-4 text-right font-black text-[var(--red)]">{fmt(ex.amount, shopSettings.currency)}</td>
+                  <td className="p-4 text-right">
+                    <button onClick={() => deleteExpense(ex.id)} className="text-[var(--text3)] hover:text-[var(--red)] transition-colors cursor-pointer">
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {expenses.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-10 text-center text-[var(--text3)] opacity-50">Koi expenses nahi</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-linear-to-br from-[var(--red)] to-[#f87171] rounded-2xl p-6 text-white shadow-xl shadow-red-500/20">
+            <div className="text-[12px] font-bold uppercase opacity-80 mb-1">Total Expenses</div>
+            <div className="text-3xl font-black">{fmt(totalExpenses, shopSettings.currency)}</div>
+          </div>
+          
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6">
+            <h3 className="font-bold mb-4 text-[14px]">Quick Stats</h3>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-[12px] text-[var(--text2)]">This Month</span>
+                <span className="font-bold">{fmt(totalExpenses, shopSettings.currency)}</span>
+              </div>
+              <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full bg-[var(--red)] w-[40%]" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddExpenseModal({ showToast, user, closeModal }: { showToast: any, user: User, closeModal: any }) {
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({ title: '', amount: '', category: 'General', date: today() });
+
+  const save = async () => {
+    if (!form.title || !form.amount) return showToast('Sabhi fields bharein!', 'err');
+    setLoading(true);
+    try {
+      const id = 'EXP-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+      await setDoc(doc(db, 'expenses', id), {
+        ...form,
+        id,
+        amount: parseFloat(form.amount),
+        ownerUid: user.uid
+      });
+      showToast('Expense added successfully', 'ok');
+      closeModal();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'expenses');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-bold text-[var(--text3)] uppercase">Title *</label>
+        <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none focus:border-[var(--orange)]" placeholder="Rent, Electricity, etc." />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-bold text-[var(--text3)] uppercase">Amount *</label>
+          <input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none focus:border-[var(--orange)]" placeholder="0.00" />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-bold text-[var(--text3)] uppercase">Category</label>
+          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none focus:border-[var(--orange)]">
+            <option>General</option>
+            <option>Rent</option>
+            <option>Salary</option>
+            <option>Inventory</option>
+            <option>Marketing</option>
+            <option>Utilities</option>
+          </select>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-bold text-[var(--text3)] uppercase">Date</label>
+        <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-sm outline-none focus:border-[var(--orange)]" />
+      </div>
+      <button onClick={save} disabled={loading} className="w-full py-3.5 bg-[var(--red)] text-white font-bold rounded-xl shadow-lg shadow-red-500/20 disabled:opacity-50 cursor-pointer mt-4">
+        {loading ? '⏳ Saving...' : 'Add Expense'}
+      </button>
     </div>
   );
 }
@@ -1189,10 +2064,48 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
   const [status, setStatus] = useState<'Paid' | 'Pending'>('Paid');
   const [date, setDate] = useState(today());
   const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(invoices[0] || null);
+
+  const [previewFormat, setPreviewFormat] = useState<'PDF' | 'IMG'>('PDF');
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const subtotal = items.reduce((a, b) => a + b.amount, 0);
   const gstAmt = (subtotal - discount) * (gstPct / 100);
   const total = subtotal - discount + gstAmt;
+
+  const downloadAsPDF = async () => {
+    if (!previewRef.current || !selectedInvoice) return;
+    showToast('⏳ Generating PDF...', 'info');
+    try {
+      const canvas = await html2canvas(previewRef.current, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Invoice_${selectedInvoice.id}.pdf`);
+      showToast('✅ PDF Downloaded', 'ok');
+    } catch (e) {
+      showToast('❌ PDF Download failed', 'err');
+    }
+  };
+
+  const downloadAsImage = async () => {
+    if (!previewRef.current || !selectedInvoice) return;
+    showToast('⏳ Generating Image...', 'info');
+    try {
+      const canvas = await html2canvas(previewRef.current, { scale: 2, backgroundColor: null, useCORS: true });
+      const imgData = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = imgData;
+      link.download = `Invoice_${selectedInvoice.id}.png`;
+      link.click();
+      showToast('✅ Image Downloaded', 'ok');
+    } catch (e) {
+      showToast('❌ Image Download failed', 'err');
+    }
+  };
 
   const addItem = () => setItems([...items, { serviceId: '', serviceName: '', qty: 1, rate: 0, amount: 0 }]);
   const removeItem = (idx: number) => setItems(items.filter((_, i) => i !== idx));
@@ -1234,16 +2147,20 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
       }
       await setDoc(counterRef, { INV: nextNum, ownerUid: user.uid }, { merge: true });
 
-      const invId = `${shopSettings.invPrefix}${String(nextNum).padStart(3, '0')}`;
+      const invId = `${shopSettings.invPrefix || 'INV'}${String(nextNum).padStart(3, '0')}`;
+      const docId = `${user.uid}_${invId.replace(/[\/]/g, '_')}_${Date.now()}`;
       const newInv: Invoice = {
         id: invId,
+        docId,
         customerId: selectedCust,
         customerName: cust.name,
         customerMobile: cust.mobile,
         customerAddress: cust.address,
+        customerEmail: cust.email || '',
         items: validItems,
         subtotal,
         discount,
+        discountAmount: discount,
         gst: gstAmt,
         gstPct,
         total,
@@ -1253,7 +2170,7 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
         ownerUid: user.uid
       };
 
-      await setDoc(doc(db, 'invoices', invId), newInv);
+      await setDoc(doc(db, 'invoices', docId), newInv);
       
       setItems([{ serviceId: '', serviceName: '', qty: 1, rate: 0, amount: 0 }]);
       showToast(`✅ Invoice ban gayi: ${newInv.id}`, 'ok');
@@ -1261,6 +2178,7 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
 
       // Smart Share Logic
       openShareModal(newInv);
+      setSelectedInvoice(newInv);
     } catch (err) {
       setIsGenerating(false);
       handleFirestoreError(err, OperationType.WRITE, 'invoices');
@@ -1270,8 +2188,11 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
   const deleteInvoice = async (id: string) => {
     if (confirm('Are you sure you want to delete this invoice?')) {
       try {
-        await deleteDoc(doc(db, 'invoices', id));
+        const inv = invoices.find(i => i.id === id);
+        const targetId = inv?.docId || id;
+        await deleteDoc(doc(db, 'invoices', targetId));
         showToast('Invoice deleted', 'ok');
+        if (selectedInvoice?.id === id) setSelectedInvoice(null);
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `invoices/${id}`);
       }
@@ -1279,209 +2200,500 @@ function Billing({ invoices, customers, services, shopSettings, showToast, openS
   };
 
   const shareWA = (inv: Invoice) => {
-    const portalLink = `${window.location.origin}/portal?id=${inv.id}&owner=${inv.ownerUid}`;
-    const msg = `Hello *${inv.customerName}*\n\nYour invoice is ready.\n\nInvoice Number: *#${inv.id}*\nTotal Amount: *${fmt(inv.total, shopSettings.currency)}*\n\nView Invoice:\n${portalLink}`;
+    const portalLink = `${window.location.origin}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`;
+    const msg = `🚀 *Invoice Ready!* 🚀\n\nHey *${inv.customerName}*,\n\nThank you for choosing *${shopSettings.name}*! Your invoice #*${inv.id}* is ready.\n\n💰 *Total Amount:* ${fmt(inv.total, shopSettings.currency)}\n📅 *Invoice Date:* ${fmtDate(inv.created)}\n⏳ *Status:* ${inv.status}\n\n👉 *View & Pay Online:* ${portalLink}\n\n${shopSettings.waLink ? `💬 Chat with us: ${shopSettings.waLink}\n` : ''}\nHappy to serve you!\n*${shopSettings.name}*`;
     window.open(`https://wa.me/91${inv.customerMobile.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  return (
-    <div className="grid lg:grid-cols-2 gap-6">
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
-        <h3 className="font-display text-[15px] font-[700] mb-5 flex items-center gap-2">
-          <Plus size={18} className="text-[var(--orange)]" /> New Invoice
-        </h3>
-        
-        <div className="space-y-5">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Customer *</label>
-            <select 
-              value={selectedCust} 
-              onChange={(e) => setSelectedCust(e.target.value)}
-              className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]"
-            >
-              <option value="">Select Customer</option>
-              {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.mobile})</option>)}
-            </select>
-          </div>
+  const copyPaymentLink = (inv: Invoice) => {
+    const portalLink = `${window.location.origin}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`;
+    navigator.clipboard.writeText(portalLink);
+    showToast('Payment link copied to clipboard!', 'ok');
+  };
 
-          <div className="space-y-3">
-            <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider block">Items / Services</label>
-            {items.map((item, idx) => (
-              <div key={idx} className="flex gap-2 items-end">
-                <div className="flex-1 flex flex-col gap-1">
-                  {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Service</span>}
-                  <select 
-                    value={item.serviceId} 
-                    onChange={(e) => updateItem(idx, 'serviceId', e.target.value)}
-                    className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
-                  >
-                    <option value="">Select Service</option>
-                    {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+  return (
+    <div className="grid lg:grid-cols-2 gap-6 h-full overflow-hidden">
+      <div className="space-y-6 overflow-y-auto pr-2">
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
+          <h3 className="font-display text-[15px] font-[700] mb-5 flex items-center gap-2">
+            <Plus size={18} className="text-[var(--orange)]" /> New Invoice
+          </h3>
+          
+          <div className="space-y-5">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Customer *</label>
+              <select 
+                value={selectedCust} 
+                onChange={(e) => setSelectedCust(e.target.value)}
+                className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]"
+              >
+                <option value="">Select Customer</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.mobile})</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider block">Items / Services</label>
+              {items.map((item, idx) => (
+                <div key={idx} className="flex gap-2 items-end">
+                  <div className="flex-1 flex flex-col gap-1">
+                    {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Service</span>}
+                    <select 
+                      value={item.serviceId} 
+                      onChange={(e) => updateItem(idx, 'serviceId', e.target.value)}
+                      className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
+                    >
+                      <option value="">Select Service</option>
+                      {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-16 flex flex-col gap-1">
+                    {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Qty</span>}
+                    <input 
+                      type="number" 
+                      value={item.qty} 
+                      onChange={(e) => updateItem(idx, 'qty', e.target.value)}
+                      className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
+                    />
+                  </div>
+                  <div className="w-20 flex flex-col gap-1">
+                    {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Rate</span>}
+                    <input 
+                      type="number" 
+                      value={item.rate} 
+                      onChange={(e) => updateItem(idx, 'rate', e.target.value)}
+                      className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
+                    />
+                  </div>
+                  <div className="w-24 flex flex-col gap-1">
+                    {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Amount</span>}
+                    <div className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] opacity-50">{fmt(item.amount, shopSettings.currency)}</div>
+                  </div>
+                  {items.length > 1 && (
+                    <button onClick={() => removeItem(idx)} className="p-2.5 text-[var(--red)] rounded-lg cursor-pointer">
+                      <Trash2 size={18} />
+                    </button>
+                  )}
                 </div>
-                <div className="w-16 flex flex-col gap-1">
-                  {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Qty</span>}
-                  <input 
-                    type="number" 
-                    value={item.qty} 
-                    onChange={(e) => updateItem(idx, 'qty', e.target.value)}
-                    className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
-                  />
-                </div>
-                <div className="w-20 flex flex-col gap-1">
-                  {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Rate</span>}
-                  <input 
-                    type="number" 
-                    value={item.rate} 
-                    onChange={(e) => updateItem(idx, 'rate', e.target.value)}
-                    className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] outline-none focus:border-[var(--orange)]"
-                  />
-                </div>
-                <div className="w-24 flex flex-col gap-1">
-                  {idx === 0 && <span className="text-[10px] text-[var(--text3)]">Amount</span>}
-                  <div className="w-full p-2.5 bg-white/5 border border-[var(--border)] rounded-lg text-[13px] opacity-50">{fmt(item.amount, shopSettings.currency)}</div>
-                </div>
-                {items.length > 1 && (
-                  <button onClick={() => removeItem(idx)} className="p-2.5 text-[var(--red)] rounded-lg cursor-pointer">
-                    <Trash2 size={18} />
-                  </button>
-                )}
+              ))}
+              <button onClick={addItem} className="text-[13px] font-[600] text-[var(--orange)] flex items-center gap-1.5 cursor-pointer">
+                <Plus size={16} /> Add Item
+              </button>
+            </div>
+
+            <div className="h-px bg-[var(--border)]" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Discount (₹)</label>
+                <input type="number" value={discount} onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
               </div>
-            ))}
-            <button onClick={addItem} className="text-[13px] font-[600] text-[var(--orange)] flex items-center gap-1.5 cursor-pointer">
-              <Plus size={16} /> Add Item
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">GST %</label>
+                <select value={gstPct} onChange={(e) => setGstPct(parseFloat(e.target.value))} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
+                  <option value="0">No GST</option>
+                  <option value="5">5%</option>
+                  <option value="12">12%</option>
+                  <option value="18">18%</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Payment Mode</label>
+                <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
+                  <option>Cash</option>
+                  <option>UPI</option>
+                  <option>Bank Transfer</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Status</label>
+                <select value={status} onChange={(e) => setStatus(e.target.value as any)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
+                  <option value="Paid">Paid</option>
+                  <option value="Pending">Pending</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-[var(--bg3)] rounded-xl p-4 space-y-2">
+              <div className="flex justify-between text-[13px]">
+                <span className="text-[var(--text2)]">Subtotal:</span>
+                <span>{fmt(subtotal, shopSettings.currency)}</span>
+              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-[13px] text-[var(--red)]">
+                  <span>Discount:</span>
+                  <span>-{fmt(discount, shopSettings.currency)}</span>
+                </div>
+              )}
+              {gstAmt > 0 && (
+                <div className="flex justify-between text-[13px] text-[var(--blue)]">
+                  <span>GST ({gstPct}%):</span>
+                  <span>+{fmt(gstAmt, shopSettings.currency)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-[16px] font-[800] border-t border-[var(--border)] pt-2.5 mt-2">
+                <span>Grand Total:</span>
+                <span className="text-[var(--orange)]">{fmt(total, shopSettings.currency)}</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={generateInvoice}
+              disabled={isGenerating}
+              className="w-full h-12 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white font-[700] rounded-xl shadow-lg disabled:opacity-50 cursor-pointer"
+            >
+              {isGenerating ? "⏳ Generating..." : "🧾 Invoice Generate Karo"}
             </button>
           </div>
+        </div>
 
-          <div className="h-px bg-[var(--border)]" />
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Discount (₹)</label>
-              <input type="number" value={discount} onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">GST %</label>
-              <select value={gstPct} onChange={(e) => setGstPct(parseFloat(e.target.value))} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
-                <option value="0">No GST</option>
-                <option value="5">5%</option>
-                <option value="12">12%</option>
-                <option value="18">18%</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Payment Mode</label>
-              <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
-                <option>Cash</option>
-                <option>UPI</option>
-                <option>Bank Transfer</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-[600] text-[var(--text2)] uppercase tracking-wider">Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value as any)} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]">
-                <option value="Paid">Paid</option>
-                <option value="Pending">Pending</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="bg-[var(--bg3)] rounded-xl p-4 space-y-2">
-            <div className="flex justify-between text-[13px]">
-              <span className="text-[var(--text2)]">Subtotal:</span>
-              <span>{fmt(subtotal, shopSettings.currency)}</span>
-            </div>
-            {discount > 0 && (
-              <div className="flex justify-between text-[13px] text-[var(--red)]">
-                <span>Discount:</span>
-                <span>-{fmt(discount, shopSettings.currency)}</span>
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
+          <h3 className="font-display text-[15px] font-[700] mb-5">📋 Recent Invoices</h3>
+          <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+            {invoices.map((inv, i) => (
+              <div 
+                key={i} 
+                className={cn(
+                  "bg-[var(--bg3)] border rounded-xl p-4 space-y-3 transition-all cursor-pointer",
+                  selectedInvoice?.id === inv.id ? "border-[var(--orange)] shadow-md shadow-orange-500/10" : "border-[var(--border)] hover:border-white/20"
+                )}
+                onClick={() => setSelectedInvoice(inv)}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="text-[13px] font-[700]">{inv.id}</div>
+                    <div className="text-[11px] text-[var(--text2)]">{inv.customerName} · {fmtDate(inv.created)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[15px] font-[800] text-[var(--orange)]">{fmt(inv.total, shopSettings.currency)}</div>
+                    <span className={cn(
+                      "text-[10px] font-[700] px-2 py-0.5 rounded-full",
+                      inv.status === 'Paid' ? "bg-green-500/10 text-green-500" : "bg-orange-500/10 text-orange-500"
+                    )}>{inv.status}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); shareWA(inv); }}
+                    className="p-2 px-3 rounded-lg bg-[#25d366] text-white text-[10px] font-[700] flex items-center justify-center gap-1.5 cursor-pointer hover:scale-105 transition-all"
+                  >
+                    <MessageSquare size={14} fill="white" /> WhatsApp
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); copyPaymentLink(inv); }}
+                    className="p-2 px-3 rounded-lg bg-white/5 border border-[var(--border)] text-[10px] font-[700] flex items-center justify-center gap-1.5 cursor-pointer hover:bg-white/10"
+                  >
+                    <Copy size={13} /> Copy Link
+                  </button>
+                  <div className="p-1 bg-white rounded-lg cursor-pointer hover:scale-110 transition-all shadow-sm" onClick={(e) => { e.stopPropagation(); copyPaymentLink(inv); }} title="QR for Payment">
+                    <QRCodeSVG 
+                      value={`${window.location.origin}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`} 
+                      size={24}
+                    />
+                  </div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); deleteInvoice(inv.id); }}
+                    className="p-2 rounded-lg bg-red-500/10 text-[var(--red)] border border-red-500/20 cursor-pointer hover:bg-red-500/20"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {invoices.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-20 text-[var(--text3)]">
+                <FileText size={48} className="mb-3 opacity-20" />
+                <p>Koi invoice nahi</p>
               </div>
             )}
-            {gstAmt > 0 && (
-              <div className="flex justify-between text-[13px] text-[var(--blue)]">
-                <span>GST ({gstPct}%):</span>
-                <span>+{fmt(gstAmt, shopSettings.currency)}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-[16px] font-[800] border-t border-[var(--border)] pt-2.5 mt-2">
-              <span>Grand Total:</span>
-              <span className="text-[var(--orange)]">{fmt(total, shopSettings.currency)}</span>
-            </div>
           </div>
-
-          <button 
-            onClick={generateInvoice}
-            disabled={isGenerating}
-            className="w-full h-12 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white font-[700] rounded-xl shadow-lg disabled:opacity-50 cursor-pointer"
-          >
-            {isGenerating ? "⏳ Generating..." : "🧾 Invoice Generate Karo"}
-          </button>
         </div>
       </div>
 
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] p-6">
-        <h3 className="font-display text-[15px] font-[700] mb-5">📋 Recent Invoices</h3>
-        <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-          {invoices.slice().reverse().slice(0, 15).map((inv, i) => (
-            <div key={i} className="bg-[var(--bg3)] border border-[var(--border)] rounded-xl p-4 space-y-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="text-[13px] font-[700]">{inv.id}</div>
-                  <div className="text-[11px] text-[var(--text2)]">{inv.customerName} · {fmtDate(inv.created)}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[15px] font-[800] text-[var(--orange)]">{fmt(inv.total, shopSettings.currency)}</div>
-                  <span className={cn(
-                    "text-[10px] font-[700] px-2 py-0.5 rounded-full",
-                    inv.status === 'Paid' ? "bg-green-500/10 text-green-500" : "bg-orange-500/10 text-orange-500"
-                  )}>{inv.status}</span>
+      <div className="hidden lg:flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-[var(--radius)] overflow-hidden shadow-xl sticky top-0 h-[calc(100vh-140px)]">
+        {selectedInvoice ? (
+          <div className="flex flex-col h-full">
+            <div className="p-4 border-b border-[var(--border)] bg-white/5 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-[15px]">{selectedInvoice.id} Preview</h3>
+                <div className="flex gap-2 mt-1">
+                  <button 
+                    onClick={() => setPreviewFormat('PDF')}
+                    className={cn(
+                      "text-[9px] font-black uppercase tracking-tighter px-2 py-0.5 rounded border transition-all",
+                      previewFormat === 'PDF' ? "bg-[var(--orange)] border-[var(--orange)] text-white" : "text-[var(--text2)] border-[var(--border)] hover:bg-white/5"
+                    )}
+                  >
+                    PDF Style
+                  </button>
+                  <button 
+                    onClick={() => setPreviewFormat('IMG')}
+                    className={cn(
+                      "text-[9px] font-black uppercase tracking-tighter px-2 py-0.5 rounded border transition-all",
+                      previewFormat === 'IMG' ? "bg-[var(--orange)] border-[var(--orange)] text-white" : "text-[var(--text2)] border-[var(--border)] hover:bg-white/5"
+                    )}
+                  >
+                    Image Style
+                  </button>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button 
-                  onClick={() => openShareModal(inv)}
-                  className="flex-1 min-w-[80px] p-2 rounded-lg bg-[rgba(59,130,246,0.12)] text-[var(--blue)] border border-[rgba(59,130,246,0.25)] text-[11px] font-[600] flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <ExternalLink size={14} /> View
+              <div className="flex gap-2">
+                <button onClick={downloadAsPDF} className="p-2.5 bg-[var(--orange)] text-white rounded-xl shadow-lg hover:scale-105 transition-all cursor-pointer flex items-center gap-2" title="Download PDF">
+                  <Download size={18} />
+                  <span className="text-[10px] font-black uppercase tracking-widest hidden xl:inline">PDF</span>
                 </button>
-                <button 
-                  onClick={() => openShareModal(inv)}
-                  className="flex-1 min-w-[80px] p-2 rounded-lg bg-white/5 border border-[var(--border)] text-[11px] font-[600] flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Download size={14} /> PDF
+                <button onClick={downloadAsImage} className="p-2.5 bg-white/5 border border-[var(--border)] rounded-xl hover:bg-white/10 transition-all cursor-pointer flex items-center gap-2" title="Download Image">
+                  <ImageIcon size={18} />
+                  <span className="text-[10px] font-black uppercase tracking-widest hidden xl:inline">IMG</span>
                 </button>
-                <button 
-                  onClick={() => openShareModal(inv)}
-                  className="flex-1 min-w-[80px] p-2 rounded-lg bg-white/5 border border-[var(--border)] text-[11px] font-[600] flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Printer size={14} /> Print
-                </button>
-                <button 
-                  onClick={() => shareWA(inv)}
-                  className="flex-[2] min-w-[120px] p-2 rounded-lg bg-[#25d366] text-white text-[11px] font-[700] flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <MessageSquare size={14} fill="white" /> WhatsApp
-                </button>
-                <button 
-                  onClick={() => deleteInvoice(inv.id)}
-                  className="p-2 rounded-lg bg-red-500/10 text-[var(--red)] border border-red-500/20 cursor-pointer"
-                >
-                  <Trash2 size={14} />
+                <button onClick={() => window.print()} className="p-2.5 bg-white/5 border border-[var(--border)] rounded-xl hover:bg-white/10 transition-all cursor-pointer">
+                  <Printer size={18} />
                 </button>
               </div>
             </div>
-          ))}
-          {invoices.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-[var(--text3)]">
-              <FileText size={48} className="mb-3 opacity-20" />
-              <p>Koi invoice nahi</p>
+            
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-50/5 flex justify-center">
+              <div ref={previewRef} className="w-full max-w-[450px] shadow-2xl">
+                 {previewFormat === 'PDF' ? (
+                   <InvoicePreviewSmall inv={selectedInvoice} shopSettings={shopSettings} />
+                 ) : (
+                   <InvoicePreviewImageStyle inv={selectedInvoice} shopSettings={shopSettings} />
+                 )}
+              </div>
             </div>
-          )}
+
+            <div className="p-6 border-t border-[var(--border)] space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => openShareModal(selectedInvoice)}
+                  className="p-3 rounded-xl bg-white/5 border border-[var(--border)] text-[13px] font-[700] flex items-center justify-center gap-2 hover:bg-white/10 transition-all cursor-pointer text-[var(--text2)]"
+                >
+                  <Eye size={16} /> View Full
+                </button>
+                <button 
+                  onClick={() => shareWA(selectedInvoice)}
+                  className="p-3 rounded-xl bg-[#25d366] text-white text-[13px] font-[700] flex items-center justify-center gap-2 hover:scale-[1.02] transition-all cursor-pointer shadow-lg shadow-green-500/10"
+                >
+                  <MessageSquare size={16} fill="white" /> WhatsApp Share
+                </button>
+              </div>
+              
+              <div className="p-4 bg-white/5 border border-dashed border-[var(--border)] rounded-xl space-y-3">
+                <p className="text-[10px] font-black text-[var(--text3)] uppercase tracking-widest">Payment Link & QR</p>
+                <div className="flex gap-4">
+                  <div className="flex-1 space-y-2">
+                    <div className="flex gap-2 text-[11px] font-mono text-[var(--orange)] truncate">
+                      <div className="flex-1 truncate">{window.location.origin}/portal?id={selectedInvoice.docId || selectedInvoice.id}&owner={selectedInvoice.ownerUid}</div>
+                      <button onClick={() => copyPaymentLink(selectedInvoice)} className="text-[var(--text2)] hover:text-white"><Copy size={14} /></button>
+                    </div>
+                    <p className="text-[10px] text-[var(--text3)] leading-tight">Customer can scan the QR to pay directly via the payment portal.</p>
+                  </div>
+                  <div className="w-20 h-20 bg-white p-1 rounded-lg shrink-0 border border-white/10 shadow-lg">
+                    <QRCodeSVG 
+                      value={`${window.location.origin}/portal?id=${selectedInvoice.docId || selectedInvoice.id}&owner=${selectedInvoice.ownerUid}`} 
+                      size={72}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-[var(--text3)]">
+            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4">
+              <FileText size={40} className="opacity-20" />
+            </div>
+            <h3 className="text-lg font-black text-[var(--text)]">No Invoice Selected</h3>
+            <p className="max-w-[200px] mt-2 leading-relaxed">Ek invoice select karo right side se uski details dekhne ke liye.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InvoicePreviewImageStyle({ inv, shopSettings }: { inv: Invoice, shopSettings: ShopSettings }) {
+  return (
+    <div className="w-full aspect-[4/5] p-5 flex items-center justify-center font-sans bg-[#f87171] rounded-2xl overflow-hidden shadow-2xl">
+      <div className="w-full h-full rounded-[30px] p-6 flex flex-col items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f87171 0%, #dc2626 100%)' }}>
+        <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '20px 20px', opacity: 0.1 }}></div>
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+        <div className="absolute bottom-0 left-0 w-32 h-32 bg-black/10 rounded-full -ml-16 -mb-16 blur-3xl"></div>
+        
+        <div className="w-full bg-white/95 backdrop-blur-md rounded-[28px] p-8 flex flex-col items-center text-center shadow-[0_20px_50px_rgba(0,0,0,0.2)] relative z-10 border border-white/40">
+          <div className="w-12 h-1 rounded-full mb-8 bg-slate-100"></div>
+          
+          <h2 className="text-[18px] font-black text-slate-800 uppercase tracking-tight mb-8 truncate w-full">
+            {shopSettings.name}
+          </h2>
+          
+          <div className="flex flex-col items-center gap-1 mb-8">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payable Amount</span>
+            <span className="text-4xl font-black text-slate-900 tracking-tighter leading-none">
+              {fmt(inv.total, shopSettings.currency)}
+            </span>
+          </div>
+          
+          <div className={cn(
+            "px-8 py-2 rounded-full text-[11px] font-black uppercase tracking-widest shadow-lg mb-8 text-white",
+            inv.status === 'Paid' ? "bg-emerald-500 shadow-emerald-500/20" : "bg-rose-500 shadow-rose-500/20"
+          )}>
+            {inv.status}
+          </div>
+          
+          <div className="flex items-center gap-4 mb-8">
+            <div className="text-left border-r pr-4 border-slate-100">
+              <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Invoice #</div>
+              <div className="text-[11px] font-bold text-slate-700">{inv.id}</div>
+            </div>
+            <div className="flex-1 flex justify-center">
+               <div className="p-1 bg-white rounded-lg shadow-sm border border-slate-100">
+                 <QRCodeSVG 
+                    value={`${window.location.host}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`} 
+                    size={40}
+                 />
+               </div>
+            </div>
+            <div className="text-right">
+              <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Date</div>
+              <div className="text-[11px] font-bold text-slate-700">{fmtDate(inv.created)}</div>
+            </div>
+          </div>
+          
+          <div className="pt-8 border-t border-slate-100 w-full flex items-center justify-center gap-2">
+            <span className="text-[9px] font-bold text-slate-300">Powered by</span>
+            <div className="flex items-center gap-1 opacity-60">
+              <div className="w-4 h-4 bg-orange-500 rounded flex items-center justify-center text-white font-black text-[6px]">UB</div>
+              <span className="font-black text-[10px] text-slate-900 leading-none tracking-tighter">my<span className="text-orange-500 italic">BillBook</span></span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+function InvoicePreviewSmall({ inv, shopSettings }: { inv: Invoice, shopSettings: ShopSettings }) {
+  return (
+    <div className="bg-white text-slate-900 p-8 rounded-xl shadow-2xl w-full font-sans border border-slate-100 relative overflow-hidden">
+      {/* Premium Header Accent */}
+      <div className="absolute top-0 left-0 right-0 h-1.5 bg-linear-to-r from-orange-500 to-amber-400"></div>
+      
+      <div className="flex justify-between items-start mb-8 pb-6 border-b border-slate-100">
+        <div className="space-y-1">
+          <div className="text-2xl font-black text-slate-900 tracking-tighter uppercase">{shopSettings.name}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black text-orange-500 px-1.5 py-0.5 bg-orange-50 rounded uppercase tracking-widest border border-orange-100">Business Invoice</span>
+            <span className="text-[10px] font-bold text-slate-400">{shopSettings.owner}</span>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Invoice ID</div>
+          <div className="text-[18px] font-black text-slate-900">#{inv.id}</div>
+          <div className={cn(
+            "mt-1 text-[9px] font-black px-2 py-0.5 rounded-full inline-block uppercase",
+            inv.status === 'Paid' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-rose-50 text-rose-600 border border-rose-100"
+          )}>{inv.status}</div>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-8 mb-8">
+        <div>
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b pb-1">Billed To</div>
+          <div className="text-[15px] font-black text-slate-900">{inv.customerName}</div>
+          <div className="text-[11px] font-bold text-slate-500 mt-0.5">{inv.customerMobile}</div>
+          <div className="text-[10px] text-slate-400 leading-relaxed mt-1 max-w-[150px]">{inv.customerAddress}</div>
+        </div>
+        <div className="text-right flex flex-col items-end">
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b pb-1 w-full">Order Details</div>
+          <div className="space-y-1">
+            <div className="flex justify-between gap-4 text-[11px] font-bold">
+              <span className="text-slate-400">Date</span>
+              <span className="text-slate-800">{fmtDate(inv.created)}</span>
+            </div>
+            <div className="flex justify-between gap-4 text-[11px] font-bold">
+              <span className="text-slate-400">Due</span>
+              <span className="text-slate-800">{fmtDate(inv.created)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-8">
+        <div className="grid grid-cols-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 px-2">
+          <div className="col-span-2">Description</div>
+          <div className="text-center">Qty / Rate</div>
+          <div className="text-right">Total</div>
+        </div>
+        <div className="space-y-3">
+          {inv.items.map((it, i) => (
+            <div key={i} className="grid grid-cols-4 items-center bg-slate-50 rounded-lg p-3 group border border-transparent hover:border-slate-100 hover:bg-white transition-all">
+              <div className="col-span-2">
+                <div className="text-[13px] font-black text-slate-800 group-hover:text-orange-500 transition-colors">{it.serviceName}</div>
+                <div className="text-[9px] font-bold text-slate-400 uppercase">Service Item</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[11px] font-bold text-slate-700">{it.qty}</div>
+                <div className="text-[9px] text-slate-400">{fmt(it.rate, shopSettings.currency)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[14px] font-black text-slate-900">{fmt(it.amount, shopSettings.currency)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-6 border-t border-slate-100 mb-8">
+        <div className="w-48 space-y-2">
+          <div className="flex justify-between text-[11px] font-bold">
+            <span className="text-slate-400">Subtotal</span>
+            <span className="text-slate-800">{fmt(inv.subtotal, shopSettings.currency)}</span>
+          </div>
+          {inv.discount > 0 && (
+            <div className="flex justify-between text-[11px] font-bold text-rose-500">
+              <span>Discount</span>
+              <span>-{fmt(inv.discount, shopSettings.currency)}</span>
+            </div>
+          )}
+          {inv.gst > 0 && (
+            <div className="flex justify-between text-[11px] font-bold text-slate-600">
+              <span>GST ({inv.gstPct}%)</span>
+              <span>+{fmt(inv.gst, shopSettings.currency)}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-end pt-2 border-t border-slate-50">
+            <span className="text-[11px] font-black text-slate-800 uppercase tracking-widest mb-1">Total Payable</span>
+            <span className="text-[20px] font-black text-orange-500 leading-none">{fmt(inv.total, shopSettings.currency)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="pt-8 border-t border-slate-50 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 bg-white border border-slate-100 rounded-lg shadow-sm">
+            <QRCodeSVG 
+              value={`${window.location.origin}/portal?id=${inv.docId || inv.id}&owner=${inv.ownerUid}`} 
+              size={44}
+            />
+          </div>
+          <div>
+            <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Pay Securely via UPI</div>
+            <div className="text-[10px] font-bold text-slate-700">{shopSettings.upi}</div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[8px] font-black text-slate-300 uppercase tracking-[0.2em] mb-1">デジタル領収書</div>
+          <div className="flex items-center justify-end gap-1 opacity-20">
+            <div className="w-3 h-3 bg-orange-500 rounded-sm flex items-center justify-center text-white font-black text-[5px]">UB</div>
+            <span className="font-black text-[8px] text-slate-900 leading-none tracking-tighter">my<span className="text-orange-500 italic">BillBook</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // --- Settings Component ---
 function Settings({ shopSettings, showToast, user, isDarkMode, setIsDarkMode, customers, services, invoices }: { shopSettings: ShopSettings, showToast: any, user: User, isDarkMode: boolean, setIsDarkMode: any, customers: Customer[], services: Service[], invoices: Invoice[] }) {
@@ -1603,41 +2815,80 @@ function Settings({ shopSettings, showToast, user, isDarkMode, setIsDarkMode, cu
       </div>
 
       {/* Auto WhatsApp */}
-      <div className={cn(
-        "p-5 rounded-2xl border flex items-center justify-between",
-        formData.autoWhatsApp ? "bg-[rgba(37,211,102,0.05)] border-[rgba(37,211,102,0.2)]" : "bg-white/5 border-[var(--border)]"
-      )}>
-        <div className="flex items-center gap-4">
-          <div className={cn(
-            "w-12 h-12 rounded-full flex items-center justify-center",
-            formData.autoWhatsApp ? "bg-[#25d366] text-white" : "bg-white/10 text-[var(--text3)]"
-          )}>
-            <MessageSquare size={24} fill={formData.autoWhatsApp ? "white" : "none"} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-[15px]">Auto WhatsApp —</h3>
-              <span className={cn("text-[13px] font-black uppercase", formData.autoWhatsApp ? "text-[#25d366]" : "text-[var(--text3)]")}>
-                {formData.autoWhatsApp ? 'ON' : 'OFF'}
-              </span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className={cn(
+          "p-5 rounded-2xl border flex items-center justify-between",
+          formData.autoWhatsApp ? "bg-[rgba(37,211,102,0.05)] border-[rgba(37,211,102,0.2)]" : "bg-white/5 border-[var(--border)]"
+        )}>
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "w-12 h-12 rounded-full flex items-center justify-center",
+              formData.autoWhatsApp ? "bg-[#25d366] text-white" : "bg-white/10 text-[var(--text3)]"
+            )}>
+              <MessageSquare size={24} fill={formData.autoWhatsApp ? "white" : "none"} />
             </div>
-            <p className="text-[12px] text-[var(--text2)] mt-0.5">
-              {formData.autoWhatsApp ? 'Har bill banne ke baad automatic WhatsApp bhej diya jayega.' : 'OFF hai — har baar manually bhejni padegi'}
-            </p>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-[15px]">Auto WhatsApp —</h3>
+                <span className={cn("text-[13px] font-black uppercase", formData.autoWhatsApp ? "text-[#25d366]" : "text-[var(--text3)]")}>
+                  {formData.autoWhatsApp ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <p className="text-[12px] text-[var(--text2)] mt-0.5">
+                Automatic WhatsApp message trigger.
+              </p>
+            </div>
           </div>
+          <button 
+            onClick={() => setFormData({ ...formData, autoWhatsApp: !formData.autoWhatsApp })}
+            className={cn(
+              "w-14 h-7 rounded-full relative cursor-pointer",
+              formData.autoWhatsApp ? "bg-[#25d366]" : "bg-white/10"
+            )}
+          >
+            <div className={cn(
+              "absolute top-1 w-5 h-5 bg-white rounded-full",
+              formData.autoWhatsApp ? "left-8" : "left-1"
+            )} />
+          </button>
         </div>
-        <button 
-          onClick={() => setFormData({ ...formData, autoWhatsApp: !formData.autoWhatsApp })}
-          className={cn(
-            "w-14 h-7 rounded-full relative cursor-pointer",
-            formData.autoWhatsApp ? "bg-[#25d366]" : "bg-white/10"
-          )}
-        >
-          <div className={cn(
-            "absolute top-1 w-5 h-5 bg-white rounded-full",
-            formData.autoWhatsApp ? "left-8" : "left-1"
-          )} />
-        </button>
+
+        <div className={cn(
+          "p-5 rounded-2xl border flex items-center justify-between",
+          formData.autoWhatsAppShare ? "bg-[rgba(245,166,35,0.05)] border-[rgba(245,166,35,0.2)]" : "bg-white/5 border-[var(--border)]"
+        )}>
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "w-12 h-12 rounded-full flex items-center justify-center",
+              formData.autoWhatsAppShare ? "bg-[var(--orange)] text-white" : "bg-white/10 text-[var(--text3)]"
+            )}>
+              <Share2 size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-[15px]">Auto Share —</h3>
+                <span className={cn("text-[13px] font-black uppercase", formData.autoWhatsAppShare ? "text-[var(--orange)]" : "text-[var(--text3)]")}>
+                  {formData.autoWhatsAppShare ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <p className="text-[12px] text-[var(--text2)] mt-0.5">
+                Automatic WhatsApp Share Dialog.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => setFormData({ ...formData, autoWhatsAppShare: !formData.autoWhatsAppShare })}
+            className={cn(
+              "w-14 h-7 rounded-full relative cursor-pointer",
+              formData.autoWhatsAppShare ? "bg-[var(--orange)]" : "bg-white/10"
+            )}
+          >
+            <div className={cn(
+              "absolute top-1 w-5 h-5 bg-white rounded-full",
+              formData.autoWhatsAppShare ? "left-8" : "left-1"
+            )} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1736,15 +2987,40 @@ function Settings({ shopSettings, showToast, user, isDarkMode, setIsDarkMode, cu
             <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider">WhatsApp Number</label>
-                <input type="text" placeholder="e.g. 919876543210" value={formData.socialWhatsapp} onChange={(e) => setFormData({ ...formData, socialWhatsapp: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+                <input type="text" placeholder="e.g. 919876543210" value={formData.whatsapp || ''} onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider">Instagram Username</label>
-                <input type="text" placeholder="e.g. umair_bills" value={formData.socialInstagram} onChange={(e) => setFormData({ ...formData, socialInstagram: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+                <input type="text" placeholder="e.g. umair_bills" value={formData.instagram || ''} onChange={(e) => setFormData({ ...formData, instagram: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider">Facebook Page</label>
-                <input type="text" placeholder="e.g. umairbills" value={formData.socialFacebook} onChange={(e) => setFormData({ ...formData, socialFacebook: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+                <input type="text" placeholder="e.g. umairbills" value={formData.facebook || ''} onChange={(e) => setFormData({ ...formData, facebook: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider">WhatsApp Short Link</label>
+                <input type="text" placeholder="e.g. wa.me/919140090305" value={formData.waLink || ''} onChange={(e) => setFormData({ ...formData, waLink: e.target.value })} className="w-full p-3 bg-white/5 border border-[var(--border)] rounded-xl text-[14px] outline-none focus:border-[var(--orange)]" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text3)] uppercase tracking-wider text-[var(--orange)]">App Theme (Shubh Rang)</label>
+                <div className="flex gap-2 flex-wrap">
+                  {(['amber', 'blue', 'rose', 'emerald', 'slate'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setFormData({ ...formData, theme: t })}
+                      className={cn(
+                        "flex-1 min-w-[80px] p-2.5 rounded-xl border-2 transition-all capitalize text-[11px] font-black flex items-center justify-center gap-2",
+                        formData.theme === t ? "border-[var(--orange)] bg-[var(--orange)]/10 text-white" : "border-white/5 bg-white/5 text-[var(--text2)]"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-3 h-3 rounded-full",
+                        t === 'amber' ? "bg-amber-500" : t === 'blue' ? "bg-blue-500" : t === 'rose' ? "bg-rose-500" : t === 'emerald' ? "bg-emerald-500" : "bg-slate-500"
+                      )} />
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -1859,6 +3135,144 @@ function Settings({ shopSettings, showToast, user, isDarkMode, setIsDarkMode, cu
               Contact Support
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- AI Chatbot Component ---
+function AIChatBot({ onClose, shopSettings, customers, services, invoices, expenses }: { onClose: () => void, shopSettings: ShopSettings, customers: Customer[], services: Service[], invoices: Invoice[], expenses: Expense[] }) {
+  const [messages, setMessages] = useState<{ role: 'user' | 'bot', text: string }[]>([
+    { role: 'bot', text: `Hello! Main Umair Bills AI Assistant hoon. Aap apne business ke baare mein kuch bhi pooch sakte hain.` }
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+
+    const userMsg = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setLoading(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const model = 'gemini-3-flash-preview';
+      
+      const context = `
+        You are "Umair Bills AI", a helpful assistant for a business owner named ${shopSettings.owner}.
+        Business Name: ${shopSettings.name}
+        Category: ${shopSettings.businessCategory}
+        WhatsApp Support: ${shopSettings.waLink || 'Not set'}
+        
+        Business Data Summary:
+        - Total Customers: ${customers.length}
+        - Total Services: ${services.length}
+        - Total Invoices: ${invoices.length}
+        - Total Expenses: ${expenses.length}
+        - Total Revenue: ${shopSettings.currency} ${invoices.reduce((a, b) => a + b.total, 0)}
+        - Total Spending: ${shopSettings.currency} ${expenses.reduce((a, b) => a + b.amount, 0)}
+        
+        Top Services: ${services.slice(0, 3).map(s => s.name).join(', ')}
+        Recent Invoices: ${invoices.slice(0, 3).map(i => `${i.customerName} (${shopSettings.currency}${i.total})`).join(', ')}
+        
+        Answer questions in a mix of Hindi and English (Hinglish) as the user is from India.
+        Be professional, concise, and helpful. If asked about data you don't have, politely say you don't know.
+      `;
+
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          { role: 'user', parts: [{ text: context }] },
+          ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] })),
+          { role: 'user', parts: [{ text: userMsg }] }
+        ]
+      });
+
+      const botText = response.text || "Maaf kijiye, main samajh nahi paaya. Phir se koshish karein.";
+      setMessages(prev => [...prev, { role: 'bot', text: botText }]);
+    } catch (err) {
+      console.error("AI Error:", err);
+      setMessages(prev => [...prev, { role: 'bot', text: "Network error! Please try again later." }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed bottom-24 right-6 w-[350px] md:w-[400px] h-[500px] bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl z-[9999] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
+      {/* Header */}
+      <div className="p-4 bg-linear-to-br from-[var(--orange)] to-[var(--orange2)] text-white flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+            <Bot size={22} />
+          </div>
+          <div>
+            <div className="font-bold text-[14px]">Umair Bills AI</div>
+            <div className="text-[10px] opacity-80 flex items-center gap-1">
+              <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" /> Online
+            </div>
+          </div>
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer">
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--bg)]">
+        {messages.map((m, i) => (
+          <div key={i} className={cn("flex", m.role === 'user' ? "justify-end" : "justify-start")}>
+            <div className={cn(
+              "max-w-[80%] p-3 rounded-2xl text-[13px] leading-relaxed",
+              m.role === 'user' 
+                ? "bg-[var(--orange)] text-white rounded-tr-none" 
+                : "bg-white/5 border border-[var(--border)] text-[var(--text)] rounded-tl-none"
+            )}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start">
+            <div className="bg-white/5 border border-[var(--border)] p-3 rounded-2xl rounded-tl-none flex gap-1">
+              <div className="w-1.5 h-1.5 bg-[var(--text3)] rounded-full animate-bounce" />
+              <div className="w-1.5 h-1.5 bg-[var(--text3)] rounded-full animate-bounce [animation-delay:0.2s]" />
+              <div className="w-1.5 h-1.5 bg-[var(--text3)] rounded-full animate-bounce [animation-delay:0.4s]" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="p-4 border-t border-[var(--border)] bg-[var(--card)]">
+        <div className="relative flex items-center gap-2">
+          <input 
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            placeholder="Kuch bhi poochein..."
+            className="flex-1 bg-white/5 border border-[var(--border)] rounded-xl p-3 pr-12 text-[13px] outline-none focus:border-[var(--orange)] transition-all"
+          />
+          <button 
+            onClick={handleSend}
+            disabled={!input.trim() || loading}
+            className="absolute right-2 p-2 bg-[var(--orange)] text-white rounded-lg hover:scale-105 transition-all disabled:opacity-50 cursor-pointer"
+          >
+            <Send size={16} />
+          </button>
+        </div>
+        <div className="mt-2 text-[9px] text-[var(--text3)] text-center flex items-center justify-center gap-1">
+          <Sparkles size={10} /> Powered by Gemini AI
         </div>
       </div>
     </div>

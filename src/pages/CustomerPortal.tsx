@@ -19,10 +19,12 @@ import {
   User as UserIcon,
   ShieldCheck,
   Award,
-  Eye
+  Eye,
+  X,
+  FileText
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { db, doc, getDoc, handleFirestoreError, OperationType } from '../firebase';
+import { db, doc, getDoc, handleFirestoreError, OperationType, collection, query, where, getDocs } from '../firebase';
 import { jsPDF } from 'jspdf';
 
 interface PortalData {
@@ -56,18 +58,64 @@ export default function CustomerPortal() {
           const invSnap = await getDoc(invRef);
           
           if (invSnap.exists()) {
-            const invData = invSnap.data();
+            const invData = invSnap.data() as any;
             
             // Fetch Shop Settings
-            const settingsRef = doc(db, 'settings', ownerUid);
-            const settingsSnap = await getDoc(settingsRef);
-            const shopSettings = settingsSnap.exists() ? settingsSnap.data() : {};
+            let shopSettings: any = {
+              name: 'Umair Bills',
+              owner: '',
+              phone: '',
+              address: '',
+              upi: '',
+              gst: '',
+              accNo: '',
+              ifsc: '',
+              bank: '',
+              accName: ''
+            };
+            
+            try {
+              const settingsRef = doc(db, 'settings', ownerUid);
+              const settingsSnap = await getDoc(settingsRef);
+              if (settingsSnap.exists()) {
+                shopSettings = { ...shopSettings, ...settingsSnap.data() };
+              }
+            } catch (settErr) {
+              console.warn('Could not fetch settings:', settErr);
+            }
+
+            // Fetch other invoices for this customer (optional history)
+            let history: any[] = [];
+            try {
+              if (invData.customerMobile) {
+                const q = query(
+                  collection(db, 'invoices'), 
+                  where('ownerUid', '==', ownerUid),
+                  where('customerMobile', '==', invData.customerMobile)
+                );
+                const historySnap = await getDocs(q);
+                history = historySnap.docs.map(d => ({ ...d.data(), id: d.id }));
+              }
+            } catch (histErr) {
+              console.warn('Could not fetch customer history:', histErr);
+            }
 
             const payload = {
-              t: 'v',
-              c: [invData.customerName, invData.customerMobile, invData.customerAddress],
-              s: [shopSettings.name, shopSettings.phone, shopSettings.address, shopSettings.upi, shopSettings.gst, shopSettings.accNo, shopSettings.ifsc, shopSettings.bank, shopSettings.accName],
-              v: invData
+              t: 'c', // Always treat as customer view to show history
+              c: [invData.customerName || 'Customer', invData.customerMobile || '', invData.customerAddress || ''],
+              s: [
+                shopSettings.name || 'Umair Bills',
+                shopSettings.phone || '',
+                shopSettings.address || '',
+                shopSettings.upi || '',
+                shopSettings.gst || '',
+                shopSettings.accNo || '',
+                shopSettings.ifsc || '',
+                shopSettings.bank || '',
+                shopSettings.accName || ''
+              ],
+              v: invData,
+              i: history.length > 0 ? history : [invData]
             };
             setData(payload);
             setSelectedInv(invData);
@@ -210,43 +258,43 @@ export default function CustomerPortal() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] flex">
+    <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] flex font-sans">
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 hidden lg:flex">
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-orange-200">
+      <aside className="w-64 bg-[#0f172a] text-white flex flex-col shrink-0 hidden lg:flex">
+        <div className="p-6 border-b border-white/10">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="w-10 h-10 rounded-xl bg-orange-500 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-orange-500/20">
               {shop.name.charAt(0).toUpperCase()}
             </div>
-            <div className="font-black text-slate-800 truncate">{shop.name}</div>
+            <div className="font-black text-sm truncate uppercase tracking-tight">{shop.name}</div>
           </div>
           
           <nav className="space-y-1">
-            <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-orange-50 text-orange-600 font-bold text-sm">
+            <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/10 text-white font-bold text-sm">
               <LayoutDashboard size={18} /> Dashboard
             </button>
-            <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 hover:bg-slate-50 font-bold text-sm transition-colors">
+            <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-white/5 font-bold text-sm transition-colors">
               <ShoppingBag size={18} /> Shop More
             </button>
-            <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 hover:bg-slate-50 font-bold text-sm transition-colors">
+            <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:bg-white/5 font-bold text-sm transition-colors">
               <UserIcon size={18} /> My Profile
             </button>
           </nav>
         </div>
 
         <div className="mt-auto p-6 space-y-4">
-          <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+          <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
             Powered by
           </div>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-orange-500 rounded flex items-center justify-center text-white font-black text-[10px]">UB</div>
-            <span className="font-black text-sm text-slate-800">Umair Bills</span>
+            <span className="font-black text-sm text-white">Umair Bills</span>
           </div>
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold">
+            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold">
               <ShieldCheck size={14} className="text-green-500" /> 100% SECURE
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold">
+            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold">
               <Award size={14} className="text-blue-500" /> ISO CERTIFIED
             </div>
           </div>
@@ -262,209 +310,242 @@ export default function CustomerPortal() {
             </div>
             <span className="font-black text-slate-800 text-sm truncate max-w-[120px]">{shop.name}</span>
           </div>
-          <button className="p-2 text-slate-500"><UserIcon size={20} /></button>
+          <div className="flex gap-2">
+            <button className="p-2 text-slate-500"><Search size={20} /></button>
+            <button className="p-2 text-slate-500"><UserIcon size={20} /></button>
+          </div>
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          {/* Invoice List - Only shown if view type is 'c' (customer history) */}
-          {data.t === 'c' && (
-            <div className="w-full md:w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
-              <div className="p-4 border-b border-slate-100">
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search invoice by ID..." 
-                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200 transition-all"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
-                {filteredInvoices.length > 0 ? (
-                  filteredInvoices.map((inv: any, i: number) => (
-                    <div 
-                      key={i} 
-                      onClick={() => setSelectedInv(inv)}
-                      className={cn(
-                        "p-4 cursor-pointer transition-all hover:bg-slate-50 flex justify-between items-center",
-                        selectedInv?.id === inv.id ? "bg-orange-50/50 border-r-4 border-orange-500" : ""
-                      )}
-                    >
-                      <div className="space-y-1">
-                        <div className="text-sm font-black text-slate-800">{inv.id}</div>
-                        <div className="text-[11px] text-slate-400 font-bold">{fmtDate(inv.created)}</div>
-                      </div>
-                      <div className="text-right space-y-1">
-                        <div className="text-sm font-black text-slate-800">{fmt(inv.total)}</div>
-                        <div className={cn(
-                          "text-[9px] font-black uppercase px-2 py-0.5 rounded-full inline-block",
-                          inv.status === 'Paid' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
-                        )}>
-                          {inv.status === 'Paid' ? 'Paid' : 'Unpaid'}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-8 text-center text-slate-400 text-sm font-bold">
-                    No invoices found
-                  </div>
-                )}
+          {/* Voucher History Sidebar */}
+          <div className="w-full md:w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 hidden md:flex">
+            <div className="p-4 border-b border-slate-100">
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search invoice..." 
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200 transition-all"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
               </div>
             </div>
-          )}
-
-          {/* Invoice View */}
-          <main className={cn(
-            "flex-1 bg-slate-50 overflow-y-auto p-4 md:p-8 hidden md:block",
-            data.t === 'v' ? "md:flex md:items-center md:justify-center" : ""
-          )}>
-            {!selectedInv ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                <Eye size={48} className="mb-4 opacity-20" />
-                <p className="font-bold">Select an invoice to view details</p>
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
+              <div className="p-4 flex items-center justify-between bg-slate-50/50">
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Voucher History</span>
+                <span className="text-[10px] font-bold text-slate-400">Login to view all</span>
               </div>
-            ) : (
-              <div className="max-w-3xl mx-auto space-y-6">
-                <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center",
-                      selectedInv.status === 'Paid' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
-                    )}>
-                      {selectedInv.status === 'Paid' ? <CheckCircle2 size={20} /> : <Clock size={20} />}
+              {filteredInvoices.length > 0 ? (
+                filteredInvoices.map((inv: any, i: number) => (
+                  <div 
+                    key={i} 
+                    onClick={() => setSelectedInv(inv)}
+                    className={cn(
+                      "p-4 cursor-pointer transition-all hover:bg-slate-50 flex justify-between items-center group",
+                      selectedInv?.id === inv.id ? "bg-orange-50 border-r-4 border-orange-500" : ""
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <div className="text-sm font-black text-slate-800 group-hover:text-orange-600 transition-colors">{inv.id}</div>
+                      <div className="text-[11px] text-slate-400 font-bold">{fmtDate(inv.created)}</div>
                     </div>
-                    <div>
-                      <div className="text-sm font-black text-slate-800">Invoice {selectedInv.id}</div>
-                      <div className="text-xs font-bold text-slate-400">{selectedInv.status}</div>
+                    <div className="text-right space-y-1">
+                      <div className="text-sm font-black text-slate-800">{fmt(inv.total)}</div>
+                      <div className={cn(
+                        "text-[9px] font-black uppercase px-2 py-0.5 rounded-full inline-block",
+                        inv.status === 'Paid' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                      )}>
+                        {inv.status === 'Paid' ? 'Paid' : 'Unpaid'}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={printInvoice} className="p-2.5 rounded-xl bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"><Printer size={18} /></button>
-                    <button onClick={downloadPDF} className="p-2.5 rounded-xl bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"><Download size={18} /></button>
-                    <button className="p-2.5 rounded-xl bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"><Share2 size={18} /></button>
+                ))
+              ) : (
+                <div className="p-12 text-center text-slate-400 text-sm font-bold flex flex-col items-center gap-3">
+                  <FileText size={32} className="opacity-20" />
+                  No invoices found
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Main Content Area */}
+          <main className="flex-1 bg-slate-50 overflow-y-auto relative">
+            <div className="max-w-5xl mx-auto p-4 md:p-8 space-y-6">
+              {/* Top Bar with Actions */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-4">
+                  <button onClick={() => window.history.back()} className="p-2 text-slate-400 hover:text-slate-600 md:hidden">
+                    <ChevronLeft size={24} />
+                  </button>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-black text-slate-800">Sales Invoice #{selectedInv.id}</h2>
+                      <span className={cn(
+                        "text-[10px] font-black uppercase px-2 py-0.5 rounded-full",
+                        selectedInv.status === 'Paid' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                      )}>
+                        {selectedInv.status}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-400">Invoice Amount: <span className="text-slate-800">{fmt(selectedInv.total)}</span></p>
                   </div>
                 </div>
+                <div className="flex gap-2">
+                  <button onClick={printInvoice} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl font-bold text-sm transition-all cursor-pointer">
+                    <Printer size={18} /> <span className="hidden sm:inline">Print</span>
+                  </button>
+                  <button onClick={downloadPDF} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl font-bold text-sm transition-all cursor-pointer">
+                    <Download size={18} /> <span className="hidden sm:inline">Download</span>
+                  </button>
+                  <button className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 text-white hover:bg-orange-600 rounded-xl font-bold text-sm transition-all shadow-lg shadow-orange-200 cursor-pointer">
+                    Login
+                  </button>
+                </div>
+              </div>
 
-                <div id="invoice-card" className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
-                  {/* Professional Invoice Layout */}
-                  <div className="p-8 border-b-8 border-orange-500">
-                    <div className="flex justify-between items-start mb-12">
-                      <div className="space-y-4">
-                        <div className="w-16 h-16 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-2xl">
-                          {shop.name.charAt(0).toUpperCase()}
+              {/* Professional Invoice Card */}
+              <div id="invoice-card" className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
+                <div className="p-8 md:p-12">
+                  {/* Header */}
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-8 mb-12">
+                    <div className="space-y-6">
+                      <div className="w-20 h-20 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-3xl shadow-xl">
+                        {shop.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">{shop.name}</h1>
+                        <div className="mt-2 space-y-1">
+                          <p className="text-sm text-slate-500 font-bold flex items-center gap-2"><MapPin size={14} /> {shop.address}</p>
+                          <p className="text-sm text-slate-500 font-bold flex items-center gap-2"><Phone size={14} /> {shop.phone}</p>
+                          {shop.gst && <p className="text-sm text-slate-500 font-bold">GSTIN: {shop.gst}</p>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right space-y-4 w-full md:w-auto">
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="text-5xl font-black text-slate-100 uppercase tracking-tighter leading-none">Bill of Supply</div>
+                        <div className="px-2 py-0.5 bg-slate-100 text-[10px] font-black text-slate-500 rounded uppercase tracking-wider">Original for Recipient</div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-black text-slate-400 uppercase tracking-widest">Invoice No.</div>
+                        <div className="text-xl font-black text-slate-900">{selectedInv.id}</div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-right">
+                        <div>
+                          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</div>
+                          <div className="text-sm font-bold text-slate-800">{fmtDate(selectedInv.created)}</div>
                         </div>
                         <div>
-                          <h1 className="text-2xl font-black text-slate-900">{shop.name}</h1>
-                          <p className="text-sm text-slate-500 font-bold">{shop.address}</p>
-                          <p className="text-sm text-slate-500 font-bold">Phone: {shop.phone}</p>
+                          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Due Date</div>
+                          <div className="text-sm font-bold text-slate-800">{fmtDate(selectedInv.created)}</div>
                         </div>
                       </div>
-                      <div className="text-right space-y-2">
-                        <div className="text-4xl font-black text-slate-200 uppercase tracking-tighter">Invoice</div>
-                        <div className="text-lg font-black text-slate-900">#{selectedInv.id}</div>
-                        <div className="text-sm font-bold text-slate-400">Date: {fmtDate(selectedInv.created)}</div>
+                    </div>
+                  </div>
+
+                  {/* Billing Details */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12 p-6 bg-slate-50 rounded-3xl border border-slate-100">
+                    <div className="space-y-3">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bill To</div>
+                      <div className="text-lg font-black text-slate-900">{customer.name}</div>
+                      <div className="space-y-1 text-sm text-slate-500 font-bold">
+                        <p>{customer.address}</p>
+                        <p>Mobile: {customer.phone}</p>
+                        {selectedInv.customerEmail && <p>Email: {selectedInv.customerEmail}</p>}
+                        <p>Place of Supply: Uttar Pradesh</p>
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-12 mb-12">
-                      <div className="space-y-2">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bill To</div>
-                        <div className="text-lg font-black text-slate-900">{customer.name}</div>
-                        <p className="text-sm text-slate-500 font-bold">{customer.address}</p>
-                        <p className="text-sm text-slate-500 font-bold">Phone: {customer.phone}</p>
-                      </div>
-                      <div className="space-y-2 text-right">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payment Details</div>
-                        <div className="text-sm font-bold text-slate-900">Mode: <span className="text-slate-500">{selectedInv.payMode}</span></div>
-                        <div className="text-sm font-bold text-slate-900">Status: <span className={selectedInv.status === 'Paid' ? "text-green-600" : "text-red-600"}>{selectedInv.status}</span></div>
+                    <div className="space-y-3 md:text-right">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ship To</div>
+                      <div className="text-lg font-black text-slate-900">{customer.name}</div>
+                      <div className="space-y-1 text-sm text-slate-500 font-bold">
+                        <p>{customer.address}</p>
                       </div>
                     </div>
+                  </div>
 
-                    <table className="w-full mb-12">
+                  {/* Items Table */}
+                  <div className="overflow-x-auto mb-12">
+                    <table className="w-full">
                       <thead>
                         <tr className="border-b-2 border-slate-100">
-                          <th className="py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Description</th>
-                          <th className="py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest w-20">Qty</th>
+                          <th className="py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest w-12">No</th>
+                          <th className="py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Items</th>
+                          <th className="py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest w-24">Qty.</th>
                           <th className="py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest w-32">Rate</th>
-                          <th className="py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest w-32">Amount</th>
+                          <th className="py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest w-32">Total</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {selectedInv.items.map((it: any, i: number) => (
-                          <tr key={i}>
-                            <td className="py-4">
+                          <tr key={i} className="group hover:bg-slate-50/50 transition-colors">
+                            <td className="py-5 text-sm font-bold text-slate-400">{i + 1}</td>
+                            <td className="py-5">
                               <div className="text-sm font-black text-slate-800">{it.name}</div>
                             </td>
-                            <td className="py-4 text-center text-sm font-bold text-slate-600">{it.qty}</td>
-                            <td className="py-4 text-right text-sm font-bold text-slate-600">{fmt(it.rate)}</td>
-                            <td className="py-4 text-right text-sm font-black text-slate-800">{fmt(it.amount)}</td>
+                            <td className="py-5 text-center text-sm font-bold text-slate-600">{it.qty} PCS</td>
+                            <td className="py-5 text-right text-sm font-bold text-slate-600">{it.rate}</td>
+                            <td className="py-5 text-right text-sm font-black text-slate-800">{it.amount}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                  </div>
 
-                    <div className="flex justify-end">
-                      <div className="w-72 space-y-3">
-                        <div className="flex justify-between text-sm font-bold text-slate-500">
-                          <span>Subtotal</span>
-                          <span>{fmt(selectedInv.subtotal)}</span>
-                        </div>
-                        {selectedInv.discount > 0 && (
-                          <div className="flex justify-between text-sm font-bold text-red-500">
-                            <span>Discount</span>
-                            <span>-{fmt(selectedInv.discount)}</span>
-                          </div>
-                        )}
-                        {selectedInv.gst > 0 && (
-                          <div className="flex justify-between text-sm font-bold text-blue-500">
-                            <span>GST ({selectedInv.gstPct}%)</span>
-                            <span>+{fmt(selectedInv.gst)}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center pt-4 border-t-2 border-slate-100">
-                          <span className="text-lg font-black text-slate-900">Grand Total</span>
-                          <span className="text-2xl font-black text-orange-500">{fmt(selectedInv.total)}</span>
-                        </div>
+                  {/* Totals */}
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-12 pt-8 border-t-2 border-slate-100">
+                    <div className="flex-1 space-y-4">
+                      <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 inline-block">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Notes</p>
+                        <p className="text-xs font-bold text-slate-600 italic">1. Goods once sold will not be taken back or exchanged.</p>
                       </div>
                     </div>
-
-                    <div className="mt-16 pt-8 border-t border-slate-100 flex justify-between items-end">
-                      <div className="flex gap-6 items-center">
-                        <div className="w-24 h-24 p-1 border-2 border-slate-100 rounded-xl">
-                          <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`upi://pay?pa=${shop.upi}&pn=${encodeURIComponent(shop.name)}&am=${selectedInv.total}&cu=INR`)}`} 
-                            alt="UPI QR" 
-                            className="w-full h-full"
-                          />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Scan to Pay</p>
-                          <p className="text-sm font-black text-slate-800">{shop.upi}</p>
-                          <p className="text-[10px] font-bold text-slate-400">Accepted: GPay, PhonePe, Paytm</p>
-                        </div>
+                    <div className="w-full md:w-80 space-y-4">
+                      <div className="flex justify-between items-center text-sm font-black text-slate-800">
+                        <span className="uppercase tracking-widest text-[10px] text-slate-400">Subtotal</span>
+                        <span>₹ {selectedInv.subtotal}</span>
                       </div>
-                      <div className="text-right">
-                        <p className="text-xs font-bold text-slate-400 mb-1">Thank you for your business!</p>
-                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Generated by Umair Bills</p>
+                      {((selectedInv.discountAmount || selectedInv.discount) > 0) && (
+                        <div className="flex justify-between items-center text-sm font-black text-red-500">
+                          <span className="uppercase tracking-widest text-[10px]">Discount</span>
+                          <span>- ₹ {selectedInv.discountAmount || selectedInv.discount}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center pt-4 border-t-2 border-slate-100">
+                        <span className="text-lg font-black text-slate-900 uppercase tracking-tight">Total</span>
+                        <div className="text-right">
+                          <span className="text-2xl font-black text-slate-900">₹ {selectedInv.total}</span>
+                          {selectedInv.status === 'Paid' && (
+                            <div className="mt-1">
+                              <span className="px-2 py-0.5 bg-green-500 text-white text-[9px] font-black uppercase rounded shadow-sm">Fully Paid</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-
-                {selectedInv.status === 'Pending' && (
-                  <button 
-                    onClick={() => window.location.href = `upi://pay?pa=${shop.upi}&pn=${encodeURIComponent(shop.name)}&am=${selectedInv.total}&cu=INR&tn=${encodeURIComponent(`Invoice ${selectedInv.id}`)}`}
-                    className="w-full p-5 bg-orange-500 text-white font-black text-lg shadow-xl shadow-orange-200 hover:bg-orange-600 transition-all flex items-center justify-center gap-3 cursor-pointer"
-                  >
-                    📲 Pay Now via UPI — {fmt(selectedInv.total)}
-                  </button>
-                )}
               </div>
-            )}
+
+              {/* Bottom Banner */}
+              <div className="bg-[#1e293b] text-white p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white font-black text-xs">UB</div>
+                  <div>
+                    <div className="text-sm font-black">Create similar invoices using <span className="text-orange-500">Umair Bills</span></div>
+                    <p className="text-[10px] text-slate-400 font-bold">India's #1 Free Billing Software</p>
+                  </div>
+                </div>
+                <Link to="/" className="w-full md:w-auto px-6 py-2 bg-white text-slate-900 rounded-xl font-black text-sm hover:bg-slate-100 transition-all text-center">
+                  Try Now
+                </Link>
+              </div>
+            </div>
           </main>
+        </div>
+      </div>
 
           {/* Mobile Detail View (Overlay) */}
           {selectedInv && (
@@ -567,9 +648,7 @@ export default function CustomerPortal() {
                 </div>
               )}
             </div>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
